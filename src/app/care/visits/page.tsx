@@ -5,6 +5,8 @@ import { requireCare } from "@/lib/services/care-context";
 
 export const dynamic = "force-dynamic";
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export default async function CareVisits() {
   const { view } = await requireCare({ needRecord: true });
   const { h, asOf, resourcesById } = view;
@@ -26,7 +28,7 @@ export default async function CareVisits() {
                   {fmtDate(a.date)}
                   {a.time ? `, ${a.time}` : ""}
                 </div>
-                <div className="text-ink-2 capitalize">{a.forPerson === "caregiver" ? "Your own visit" : labelPurpose(a.purpose)}</div>
+                <div className="text-ink-2">{a.forPerson === "caregiver" ? "Your own visit" : cap(labelPurpose(a.purpose))}</div>
                 <div className="text-ink-2">
                   {a.withName} · {a.location}
                 </div>
@@ -67,7 +69,7 @@ export default async function CareVisits() {
         {past.map((a) => (
           <li key={a.id} className="py-3 flex justify-between gap-3">
             <div>
-              <span className="tnum">{fmtDate(a.date)}</span> <span className="capitalize text-ink-2">{labelPurpose(a.purpose)}</span> <span className="text-ink-3">· {a.withName}</span>
+              <span className="tnum">{fmtDate(a.date)}</span> <span className="text-ink-2">{cap(labelPurpose(a.purpose))}</span> <span className="text-ink-3">· {a.withName}</span>
             </div>
             <Pill kind={a.status === "completed" ? "green" : a.status === "missed" ? "amber" : "neutral"}>{a.status}</Pill>
           </li>

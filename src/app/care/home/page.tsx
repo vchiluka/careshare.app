@@ -7,6 +7,8 @@ import { requireCare } from "@/lib/services/care-context";
 
 export const dynamic = "force-dynamic";
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export default async function CareHome({ searchParams }: PageProps<"/care/home">) {
   const sp = await searchParams;
   const { view, me, access } = await requireCare();
@@ -53,7 +55,7 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
                 {fmtDate(nextVisit.date)}
                 {nextVisit.time ? `, ${nextVisit.time}` : ""}
               </div>
-              <div className="text-ink-2 capitalize">{labelPurpose(nextVisit.purpose)}</div>
+              <div className="text-ink-2">{cap(labelPurpose(nextVisit.purpose))}</div>
               <div className="text-ink-2">
                 {nextVisit.withName} · {nextVisit.location}
               </div>
