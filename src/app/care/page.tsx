@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signInAsAccount, signInAsCaregiver } from "@/app/actions";
-import { Pill } from "@/components/ui";
+import { Notice, Pill } from "@/components/ui";
 import { getCaregiverSession } from "@/lib/session";
 import { getRepository } from "@/lib/store";
 
@@ -10,9 +10,20 @@ export const dynamic = "force-dynamic";
 const relLabel: Record<string, string> = { spouse: "wife/husband", daughter: "daughter", son: "son", daughter_in_law: "daughter-in-law", sibling: "sister/brother", grandchild: "grandchild", friend_neighbor: "friend and neighbor", other: "family" };
 
 export default async function CareSignIn() {
-  const s = await getCaregiverSession();
-  if (s) redirect(s.householdId ? "/care/home" : "/care/start");
   const repo = getRepository();
+  const s = await getCaregiverSession();
+  // Only follow a session that still resolves to a record. A cookie left over from a previous
+  // deployment (memory store reset) would otherwise bounce between here and /care/home forever;
+  // in that case render the picker and let the next sign-in overwrite the cookie.
+  let stale = false;
+  if (s?.householdId && s.caregiverId) {
+    const h = await repo.household(s.householdId);
+    if (h?.caregivers.some((c) => c.id === s.caregiverId)) redirect("/care/home");
+    stale = true;
+  } else if (s?.accountId) {
+    if (await repo.account(s.accountId)) redirect("/care/start");
+    stale = true;
+  }
   const [hs, localities, accounts] = await Promise.all([repo.households(), repo.localities(), repo.accounts()]);
   const featured = ["hh_hairston", "hh_tuck", "hh_simms", "hh_motley", "hh_adkins"];
   const rows = hs
@@ -21,6 +32,7 @@ export default async function CareSignIn() {
   return (
     <div className="max-w-2xl">
       <h1>Sign in</h1>
+      {stale && <Notice kind="amber">Your previous session pointed at a record that no longer exists (the demo data was reset). Pick a caregiver or register again.</Notice>}
       <p className="mt-3 text-ink-2">
         In the pilot you sign in with the same CLEAR or ID.me account that verified who you are. This demo lets you pick a caregiver instead. You still have to be verified, and the clinic still has to confirm you, before anything from the record appears.
       </p>

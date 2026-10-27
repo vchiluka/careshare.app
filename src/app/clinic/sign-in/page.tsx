@@ -12,9 +12,11 @@ const roleLabel = ROLE_LABEL;
 
 export default async function StaffSignIn({ searchParams }: PageProps<"/clinic/sign-in">) {
   const sp = await searchParams;
-  if (await getStaffSession()) redirect("/clinic");
   const repo = getRepository();
   const [staff, sites] = await Promise.all([repo.staff(), repo.sites()]);
+  const session = await getStaffSession();
+  // Follow the session only if the staff record still exists (a CSP-created record is lost when the memory store resets).
+  if (session && staff.some((x) => x.id === session.staffId)) redirect("/clinic");
   const providers = describeIdentityProviders();
   const msg = sp.verify === "failed" ? `Verification did not go through: ${String(sp.reason ?? "")}` : sp.verify === "error" ? (sp.reason ? `Sign-in could not start: ${String(sp.reason)}` : "The sign-in link expired. Please start again.") : null;
   return (
