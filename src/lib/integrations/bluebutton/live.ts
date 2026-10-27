@@ -4,7 +4,7 @@
  *   BB_CLIENT_ID, BB_CLIENT_SECRET, BB_REDIRECT_URI       required
  *   BB_BASE_URL                                           default https://sandbox.bluebutton.cms.gov
  *   BB_SCOPES                                             default "patient/Patient.read patient/Coverage.read patient/ExplanationOfBenefit.read"
- *   BB_MAX_PAGES                                          default 20 (EOB pagination, _count=100)
+ *   BB_MAX_PAGES                                          default 20 pages per resource type (_count=50, the Blue Button maximum)
  *
  * Tokens are used once at the callback to pull Patient, Coverage and every ExplanationOfBenefit
  * type, then discarded. Storing the refresh token for a monthly re-pull is a follow-up once the
@@ -53,13 +53,20 @@ export function createLiveBlueButtonAdapter(): BlueButtonAdapter {
       if (params.state !== session.state) return { ok: false, failureReason: "State mismatch." };
       if (!params.code) return { ok: false, failureReason: "No authorization code." };
       const body = new URLSearchParams({ grant_type: "authorization_code", code: params.code, redirect_uri: c.redirectUri, code_verifier: session.codeVerifier ?? "", client_id: c.clientId, client_secret: c.clientSecret });
-      const tr = await fetch(`${c.base}/v2/o/token/`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body, cache: "no-store" });
-      if (!tr.ok) return { ok: false, failureReason: `Token exchange failed (${tr.status}).` };
-      const tok = (await tr.json()) as { access_token: string; patient?: string };
+      const tr = await fetch(`${c.base}/v2/o/token/`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" }, body, cache: "no-store" });
+      if (!tr.ok) {
+        const text = (await tr.text().catch(() => "")).slice(0, 200);
+        return { ok: false, failureReason: `Token exchange failed (${tr.status})${text ? `: ${text}` : ""}` };
+      }
+      // Blue Button returns the beneficiary's FHIR id as `patient` with the token. Refresh tokens (13-month apps)
+      // are not kept: the pull is one-shot and the token is discarded afterwards.
+      const tok = (await tr.json()) as { access_token: string; patient?: string; scope?: string };
       const auth = { authorization: `Bearer ${tok.access_token}`, accept: "application/fhir+json" };
 
+      let lastStatus = 0;
       const getJson = async <T,>(url: string): Promise<T | undefined> => {
         const r = await fetch(url, { headers: auth, cache: "no-store" });
+        lastStatus = r.status;
         return r.ok ? ((await r.json()) as T) : undefined;
       };
       const pages = async (first: string): Promise<Record<string, unknown>[]> => {
@@ -74,10 +81,24 @@ export function createLiveBlueButtonAdapter(): BlueButtonAdapter {
         return out;
       };
 
-      const patientRef = tok.patient ?? (await getJson<FhirBundle>(`${c.base}/v2/fhir/Patient/`).then((b) => (b ? (resourcesOf(b)[0]?.id as string | undefined) : undefined)));
-      const patient = patientRef ? await getJson<Record<string, unknown>>(`${c.base}/v2/fhir/Patient/${patientRef}`) : undefined;
-      const coverages = await pages(`${c.base}/v2/fhir/Coverage/?${patientRef ? `beneficiary=${patientRef}&` : ""}_count=100`);
-      const eobs = await pages(`${c.base}/v2/fhir/ExplanationOfBenefit/?${patientRef ? `patient=${patientRef}&` : ""}_count=100`);
+      // _count: Blue Button default 10, maximum 50.
+      const count = 50;
+      // The beneficiary may decline to share demographics; /Patient is then blocked (403) but Coverage and
+      // claims still work, and the id can be read from Coverage.beneficiary.
+      let patientRef = tok.patient;
+      let patient = patientRef ? await getJson<Record<string, unknown>>(`${c.base}/v2/fhir/Patient/${patientRef}`) : undefined;
+      if (!patientRef) {
+        const pb = await getJson<FhirBundle>(`${c.base}/v2/fhir/Patient/`);
+        patient = pb ? resourcesOf(pb)[0] : undefined;
+        patientRef = patient?.id as string | undefined;
+      }
+      const coverages = await pages(`${c.base}/v2/fhir/Coverage/?${patientRef ? `beneficiary=${patientRef}&` : ""}_count=${count}`);
+      if (!patientRef) {
+        const ref = coverages.map((cv) => (cv.beneficiary as { reference?: string } | undefined)?.reference).find((x) => typeof x === "string" && x.includes("/"));
+        patientRef = ref?.split("/").pop();
+      }
+      const eobs = await pages(`${c.base}/v2/fhir/ExplanationOfBenefit/?${patientRef ? `patient=${patientRef}&` : ""}_count=${count}`);
+      if (!patient && coverages.length === 0 && eobs.length === 0) return { ok: false, failureReason: `Medicare returned no records (last response ${lastStatus}). Check the app's scopes and that the sandbox beneficiary has data.` };
       const pulledOn = new Date().toISOString().slice(0, 10);
       return { ok: true, patientRef, import: mapBlueButton({ patient, coverages, eobs, pulledOn, source: "live", baseUrl: c.base }) };
     },

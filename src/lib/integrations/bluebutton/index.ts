@@ -103,7 +103,9 @@ export function createMockBlueButtonAdapter(r: MockResolvers): BlueButtonAdapter
       }
       if (!profile) return { ok: false, failureReason: "Record not found." };
       const bundle = syntheticBlueButton(profile);
-      return { ok: true, patientRef: bundle.patient.id as string, import: mapBlueButton({ ...bundle, pulledOn: day, source: "mock", baseUrl: "mock://bluebutton" }) };
+      // Medicare.gov lets the beneficiary withhold demographics: claims and coverage still arrive, Patient does not.
+      const noDemo = params.code === "ok_nodemo";
+      return { ok: true, patientRef: bundle.patient.id as string, import: mapBlueButton({ ...bundle, patient: noDemo ? undefined : bundle.patient, pulledOn: day, source: "mock", baseUrl: "mock://bluebutton" }) };
     },
   };
 }

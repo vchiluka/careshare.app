@@ -307,8 +307,9 @@ export async function confirmAddPatient() {
   const d = a.pending;
   if (!d?.consent) redirect("/care/add-patient?step=consent");
   const t = careTerm(d.term);
-  const facts: PatientFacts | undefined = d.import
-    ? patientFactsFromImport(d.import, t.sex)
+  const imported = d.import ? patientFactsFromImport(d.import, t.sex) : undefined;
+  const facts: PatientFacts | undefined = imported
+    ? { ...imported, ...(d.details ? { givenName: d.details.givenName, familyName: d.details.familyName, birthDate: d.details.birthDate, sex: d.details.sex } : {}) }
     : d.details
       ? { givenName: d.details.givenName, familyName: d.details.familyName, birthDate: d.details.birthDate, sex: d.details.sex, coverage: { partA: d.details.coverage !== "none" && d.details.coverage !== "other", partB: d.details.coverage !== "none" && d.details.coverage !== "other", partC: d.details.coverage === "medicare_advantage", partD: d.details.coverage === "medicare" || d.details.coverage === "medicare_advantage", medicaid: false }, hasDementiaDiagnosis: true }
       : undefined;

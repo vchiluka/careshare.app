@@ -21,7 +21,10 @@ export default async function MockBlueButton({ searchParams }: PageProps<"/mock/
           <Link href={`${cb}&code=ok`} className="btn btn-primary btn-lg">
             Simulate: allow
           </Link>
-          <Link href={`${cb}&code=deny`} className="btn btn-secondary">
+          <Link href={`${cb}&code=ok_nodemo`} className="btn btn-secondary">
+            Simulate: allow, but do not share personal details
+          </Link>
+          <Link href={`${cb}&code=deny`} className="btn btn-quiet">
             Simulate: deny
           </Link>
         </div>

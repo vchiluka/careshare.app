@@ -5,7 +5,7 @@ import { ConsentFields } from "@/components/care-forms";
 import { Field, Notice, Pill } from "@/components/ui";
 import { CARE_TERMS, careTerm, voice } from "@/lib/domain/care-terms";
 import { fmtDate } from "@/lib/engine";
-import { describeBlueButton, fillsFromImport } from "@/lib/integrations/bluebutton";
+import { coverageSummary, describeBlueButton, fillsFromImport } from "@/lib/integrations/bluebutton";
 import { requireAccount } from "@/lib/services/care-context";
 import { patientFactsFromImport } from "@/lib/services/self-register";
 import { getRepository } from "@/lib/store";
@@ -260,11 +260,48 @@ export default async function AddPatient({ searchParams }: PageProps<"/care/add-
   }
 
   // ---- 5. Confirm ----
-  const facts = d?.import ? patientFactsFromImport(d.import, t.sex) : d?.details ? { ...d.details, coverage: undefined } : undefined;
-  if (!facts) redirect("/care/add-patient?step=medicare");
   const imp = d?.import;
+  const fromImport = imp ? patientFactsFromImport(imp, t.sex) : undefined;
+  // Medicare lets a beneficiary decline to share demographics: claims arrive, the name does not. Ask for it once.
+  const namesMissing = !!imp && (!fromImport?.givenName || !fromImport?.familyName || !fromImport?.birthDate) && !d?.details;
+  if (namesMissing) {
+    return (
+      <div className="max-w-xl">
+        <Progress current={4} />
+        <h1 className="mt-4">Medicare shared the records, but not the name</h1>
+        <p className="mt-2 text-ink-2">{v.Them} chose not to share personal details on Medicare.gov. That is fine; the coverage and prescriptions came through ({imp!.counts.pde} fills). Type {v.their} name and date of birth as they appear on the Medicare card.</p>
+        <form action={draftDetails} className="card mt-6 space-y-4">
+          <input type="hidden" name="coverage" value="medicare" />
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label="First name">
+              <input name="givenName" required defaultValue={fromImport?.givenName || d?.patientFirstName} />
+            </Field>
+            <Field label="Last name">
+              <input name="familyName" required defaultValue={fromImport?.familyName} />
+            </Field>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label="Date of birth">
+              <input name="birthDate" type="date" required defaultValue={fromImport?.birthDate} />
+            </Field>
+            <Field label="Sex on the Medicare card">
+              <select name="sex" defaultValue={fromImport?.sex ?? t.sex ?? "F"}>
+                <option value="F">Female</option>
+                <option value="M">Male</option>
+              </select>
+            </Field>
+          </div>
+          <button className="btn btn-primary btn-lg w-full">Next</button>
+        </form>
+        {cancel}
+      </div>
+    );
+  }
+  const facts = fromImport ? { ...fromImport, ...(d?.details ? { givenName: d.details.givenName, familyName: d.details.familyName, birthDate: d.details.birthDate, sex: d.details.sex } : {}) } : d?.details ? { ...d.details, coverage: undefined } : undefined;
+  if (!facts) redirect("/care/add-patient?step=medicare");
   const fills = imp ? fillsFromImport(imp) : [];
-  const cov = imp ? patientFactsFromImport(imp, t.sex)!.coverage : undefined;
+  const cs = imp ? coverageSummary(imp) : undefined;
+  const cov = cs && imp!.coverages.length ? { partA: cs.partA, partB: cs.partB, partC: cs.partC, partD: cs.partD, medicaid: cs.dual } : undefined;
   const covText = cov ? [cov.partA && "Part A", cov.partB && "Part B", cov.partC && "Medicare Advantage (Part C)", cov.partD && "Part D", cov.medicaid && "Medicaid"].filter(Boolean).join(", ") : d?.details?.coverage === "medicare_advantage" ? "Medicare Advantage" : d?.details?.coverage === "other" ? "Other insurance" : d?.details?.coverage === "none" ? "No coverage right now" : "Medicare";
   return (
     <div className="max-w-xl">

@@ -82,6 +82,10 @@ export default async function CareMedications({ searchParams }: PageProps<"/care
                   Pulled {h.medicareImport.counts.coverages} coverage records, {h.medicareImport.counts.eobs} claims ({h.medicareImport.counts.pde} pharmacy, {h.medicareImport.counts.eobs - h.medicareImport.counts.pde} medical).
                 </p>
               )}
+              <form action={connectMedicare} className="mt-3">
+                <button className="btn btn-secondary">Check Medicare again</button>
+                <span className="text-xs text-ink-3 ml-2">Goes through Medicare.gov again; we do not keep a standing connection.</span>
+              </form>
               <h3 className="mt-4">Recent fills</h3>
               <ul className="mt-2 text-sm divide-y divide-rule">
                 {[...h.medicareFills].sort((a, b) => b.fillOn.localeCompare(a.fillOn)).slice(0, 8).map((f, i) => (
