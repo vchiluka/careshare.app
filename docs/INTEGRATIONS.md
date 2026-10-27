@@ -20,7 +20,7 @@ Target: NIST SP 800-63-3 IAL2 identity proofing and AAL2 authentication. One OID
 
 **Flow.** `start()` builds the authorize URL (response_type=code, PKCE S256, state, nonce, scopes, optional acr_values) and returns a session the server action stores in a signed HTTP-only cookie. The vendor redirects to `/api/identity/callback/{idme|clear}`; the route handler takes the cookie, exchanges the code (client_secret_post by default), verifies the ID token against the vendor's JWKS (issuer, audience, nonce, expiry), optionally calls userinfo, maps assurance, and updates the caregiver. On success at IAL2 the caregiver's proxy is automatically set to `requested` so the clinic's queue picks it up.
 
-**Assurance mapping.** `<P>_ASSURANCE_MODE=scope` (default): a successful exchange under an IAL2/AAL2 scope is recorded as IAL2/AAL2, with the raw `acr`/`ial`/`aal` claims kept as audit evidence. `claims`: levels are read from those claims and anything short of IAL2 is recorded as IAL1 and does not unlock the record.
+**Assurance mapping.** Neither vendor returns NIST `acr`/`ial`/`aal` claims. `<P>_ASSURANCE_MODE=scope` (default) records IAL2/AAL2 when the vendor enforced an IAL2 policy before issuing tokens: for ID.me that is a successful exchange under an IAL2 policy handle in the scope (`nist_aal2_ial2`); for CLEAR Verified, an IAL2 proofing service, a token with `verification_status` success (or no status claim). The evidence string in the audit entry keeps whatever the token carried (`verification_status`, `verification_is_sandbox`, `amr`, scopes). `claims` mode ignores both shortcuts and requires explicit IAL2 claims, which today locks everyone out; use it only if a vendor starts emitting them.
 
 **To turn on the ID.me sandbox** (Vercel → Project → Settings → Environment Variables; never paste values into chat or commit them):
 
@@ -28,24 +28,23 @@ Target: NIST SP 800-63-3 IAL2 identity proofing and AAL2 authentication. One OID
 IDENTITY_IDME=live
 IDME_CLIENT_ID=…            from the ID.me developer console
 IDME_CLIENT_SECRET=…
-IDME_REDIRECT_URI=https://<your-host>/api/identity/callback/idme   (register the same URL with ID.me)
-IDME_ISSUER=https://api.idmelabs.com
-IDME_SCOPES=openid <the IAL2/AAL2 scope string provisioned for your sandbox>
+IDME_REDIRECT_URI=https://<your-host>/api/identity/callback/idme   (ID.me adds it to both environments; no dynamic URLs)
+IDME_ISSUER=https://api.idmelabs.com/oidc      (production: https://api.id.me/oidc)
+IDME_SCOPES=openid nist_aal2_ial2              ("openid <policy handle>"; the handle is shown on your app in the ID.me console)
 ```
+
+ID.me facts the adapter relies on (docs.id.me): sandbox host `api.idmelabs.com`, issuer `https://api.idmelabs.com/oidc`, discovery at the host root (`/.well-known/openid-configuration`, the adapter tries the issuer path first and falls back to the root), JWKS `/oidc/.well-known/jwks`, authorize `/oauth/authorize`, token `/oauth/token` (code + PKCE S256, `client_secret` in the form body), userinfo `/api/public/v3/userinfo` returning a signed JWT (the adapter decodes it). ID token claims are `fname`, `lname`, `birth_date` plus `sub`; no `acr`. Sandbox has test identities and no PII; production has no test identities.
 
 **To turn on the CLEAR sandbox:**
 
 ```
 IDENTITY_CLEAR=live
-CLEAR_CLIENT_ID=…
+CLEAR_CLIENT_ID=…            from the CLEAR console (choose the sandbox environment when creating the client)
 CLEAR_CLIENT_SECRET=…
-CLEAR_REDIRECT_URI=https://<your-host>/api/identity/callback/clear
-CLEAR_ISSUER=<the sandbox issuer URL from your CLEAR developer account>
-CLEAR_SCOPES=<per your CLEAR integration guide>
-CLEAR_TOKEN_AUTH=client_secret_post   (or client_secret_basic, per the guide)
+CLEAR_REDIRECT_URI=https://<your-host>/api/identity/callback/clear   (add to the client's redirect allowlist)
 ```
 
-If the vendor does not publish `/.well-known/openid-configuration` at the issuer, set `<P>_AUTHORIZATION_ENDPOINT`, `<P>_TOKEN_ENDPOINT`, `<P>_JWKS_URI` (and `<P>_USERINFO_ENDPOINT`) explicitly. Redeploy after changing variables. Then open a caregiver whose status is not verified and press Verify; the mock page is replaced by the vendor.
+That is all CLEAR needs. CLEAR Verified publishes fixed endpoints and no discovery document, so the adapter defaults to issuer `https://verified.clearme.com/integrations`, authorize `.../oauth2/auth`, token `.../oauth2/token`, JWKS `.../.well-known/jwks.json`, scope `openid`, PKCE S256, `client_secret_post` (docs.clearme.com, "OAuth 2.0 and OIDC"). Sandbox and production share the host; sandbox tokens carry `verification_is_sandbox: true`. The identity token is only issued when CLEAR validated the person's demographics, and carries `verification_id`, `amr` (for example `selfie`), `given_name`, `family_name`, `birthdate`. Override any endpoint with `CLEAR_ISSUER`, `CLEAR_AUTHORIZATION_ENDPOINT`, `CLEAR_TOKEN_ENDPOINT`, `CLEAR_JWKS_URI`, `CLEAR_USERINFO_ENDPOINT` if CLEAR gives you different values. Redeploy after changing variables. Then open a caregiver whose status is not verified and press Verify; the mock page is replaced by the vendor.
 
 **What is stored.** Provider, subject id, assurance levels, date. Never attributes beyond a one-time name/DOB match, never document images, never tokens. The audit entry records the subject reference and assurance evidence.
 

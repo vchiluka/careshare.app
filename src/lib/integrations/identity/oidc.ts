@@ -48,9 +48,19 @@ interface OidcConfig {
 }
 
 const DEFAULT_SCOPES: Record<IdentityProviderId, string> = {
-  // ID.me: the IAL2/AAL2 scope string is account-provisioned; this is the documented default name.
-  idme: "openid http://idmanagement.gov/ns/assurance/ial/2/aal/2",
-  clear: "openid profile",
+  // ID.me passes the verification policy inside the scope as "openid <policy handle>". The handle is
+  // assigned per app by ID.me (docs.id.me shows nist_aal2_ial2 for IAL2/AAL2); set IDME_SCOPES to yours.
+  idme: "openid nist_aal2_ial2",
+  // CLEAR Verified: openid is enough; offline/offline_access only add a refresh token.
+  clear: "openid",
+};
+
+/** CLEAR publishes fixed endpoints (docs.clearme.com) and no discovery document. */
+const CLEAR_DEFAULT_ENDPOINTS = {
+  issuer: "https://verified.clearme.com/integrations",
+  authorization_endpoint: "https://verified.clearme.com/integrations/oauth2/auth",
+  token_endpoint: "https://verified.clearme.com/integrations/oauth2/token",
+  jwks_uri: "https://verified.clearme.com/integrations/.well-known/jwks.json",
 };
 
 export function readOidcConfig(id: IdentityProviderId): OidcConfig {
@@ -61,8 +71,12 @@ export function readOidcConfig(id: IdentityProviderId): OidcConfig {
   const redirectUri = env("REDIRECT_URI");
   const missing = [!clientId && `${P}_CLIENT_ID`, !clientSecret && `${P}_CLIENT_SECRET`, !redirectUri && `${P}_REDIRECT_URI`].filter(Boolean);
   if (missing.length) throw new Error(`Live ${id} identity provider selected but ${missing.join(", ")} not set. See .env.example.`);
-  const issuer = env("ISSUER");
-  if (!issuer && !(env("AUTHORIZATION_ENDPOINT") && env("TOKEN_ENDPOINT") && env("JWKS_URI"))) {
+  const clearDefaults = id === "clear" ? CLEAR_DEFAULT_ENDPOINTS : undefined;
+  const issuer = env("ISSUER") ?? clearDefaults?.issuer;
+  const authorizationEndpoint = env("AUTHORIZATION_ENDPOINT") ?? clearDefaults?.authorization_endpoint;
+  const tokenEndpoint = env("TOKEN_ENDPOINT") ?? clearDefaults?.token_endpoint;
+  const jwksUri = env("JWKS_URI") ?? clearDefaults?.jwks_uri;
+  if (!issuer && !(authorizationEndpoint && tokenEndpoint && jwksUri)) {
     throw new Error(`Set ${P}_ISSUER (for discovery) or ${P}_AUTHORIZATION_ENDPOINT, ${P}_TOKEN_ENDPOINT and ${P}_JWKS_URI.`);
   }
   return {
@@ -70,9 +84,9 @@ export function readOidcConfig(id: IdentityProviderId): OidcConfig {
     clientSecret: clientSecret!,
     redirectUri: redirectUri!,
     issuer,
-    authorizationEndpoint: env("AUTHORIZATION_ENDPOINT"),
-    tokenEndpoint: env("TOKEN_ENDPOINT"),
-    jwksUri: env("JWKS_URI"),
+    authorizationEndpoint,
+    tokenEndpoint,
+    jwksUri,
     userinfoEndpoint: env("USERINFO_ENDPOINT"),
     scopes: env("SCOPES") ?? DEFAULT_SCOPES[id],
     acrValues: env("ACR_VALUES"),
@@ -95,13 +109,26 @@ async function discover(cfg: OidcConfig): Promise<Discovery> {
   if (cfg.authorizationEndpoint && cfg.tokenEndpoint && cfg.jwksUri) {
     return { issuer: cfg.issuer ?? "", authorization_endpoint: cfg.authorizationEndpoint, token_endpoint: cfg.tokenEndpoint, jwks_uri: cfg.jwksUri, userinfo_endpoint: cfg.userinfoEndpoint };
   }
-  const url = `${cfg.issuer!.replace(/\/$/, "")}/.well-known/openid-configuration`;
+  // Try the issuer path first, then the host root: ID.me's issuer is https://api.idmelabs.com/oidc but
+  // its discovery document is served at https://api.idmelabs.com/.well-known/openid-configuration.
+  const issuer = cfg.issuer!.replace(/\/$/, "");
+  const candidates = [...new Set([`${issuer}/.well-known/openid-configuration`, `${new URL(issuer).origin}/.well-known/openid-configuration`])];
+  const url = candidates[0];
   if (!discoveryCache.has(url)) {
     discoveryCache.set(
       url,
-      fetch(url, { cache: "no-store" }).then(async (r) => {
-        if (!r.ok) throw new Error(`OIDC discovery failed (${r.status}) at ${url}`);
-        const d = (await r.json()) as Discovery;
+      (async () => {
+        let d: Discovery | undefined;
+        const tried: string[] = [];
+        for (const c of candidates) {
+          const r = await fetch(c, { cache: "no-store" });
+          tried.push(`${c} → ${r.status}`);
+          if (r.ok) {
+            d = (await r.json()) as Discovery;
+            break;
+          }
+        }
+        if (!d) throw new Error(`OIDC discovery failed: ${tried.join("; ")}`);
         return {
           issuer: d.issuer,
           authorization_endpoint: cfg.authorizationEndpoint ?? d.authorization_endpoint,
@@ -109,7 +136,7 @@ async function discover(cfg: OidcConfig): Promise<Discovery> {
           jwks_uri: cfg.jwksUri ?? d.jwks_uri,
           userinfo_endpoint: cfg.userinfoEndpoint ?? d.userinfo_endpoint,
         };
-      }),
+      })(),
     );
   }
   return discoveryCache.get(url)!;
@@ -121,19 +148,33 @@ function jwks(uri: string) {
   return jwksCache.get(uri)!;
 }
 
-function assuranceFrom(claims: JWTPayload, cfg: OidcConfig): { ial: "IAL1" | "IAL2"; aal: "AAL1" | "AAL2"; evidence: string } {
+/**
+ * Assurance from what each vendor actually returns:
+ *   ID.me  — no acr/ial/aal claims; the policy handle in the scope (e.g. nist_aal2_ial2) is what the
+ *            vendor enforced before issuing tokens, so a success under an IAL2 policy is IAL2/AAL2.
+ *   CLEAR  — identity tokens carry verification_status ("success"), verification_is_sandbox, amr.
+ *            CLEAR Verified is an IAL2 proofing service; a successful verification is IAL2/AAL2.
+ * ASSURANCE_MODE=claims ignores both shortcuts and requires explicit acr/ial/aal claims.
+ */
+function assuranceFrom(claims: JWTPayload, cfg: OidcConfig, id: IdentityProviderId): { ial: "IAL1" | "IAL2"; aal: "AAL1" | "AAL2"; evidence: string } {
+  const c = claims as Record<string, unknown>;
   const acr = typeof claims.acr === "string" ? claims.acr : undefined;
-  const ial = (claims as Record<string, unknown>).ial;
-  const aal = (claims as Record<string, unknown>).aal;
-  const evidence = `acr=${acr ?? "-"} ial=${ial ?? "-"} aal=${aal ?? "-"} scopes="${cfg.scopes}"`;
+  const ial = c.ial;
+  const aal = c.aal;
+  const verificationStatus = typeof c.verification_status === "string" ? c.verification_status : undefined;
+  const sandbox = c.verification_is_sandbox === true || c.verification_is_sandbox === "true";
+  const amr = Array.isArray(claims.amr) ? claims.amr.join(",") : "-";
+  const evidence = `acr=${acr ?? "-"} ial=${ial ?? "-"} aal=${aal ?? "-"} verification_status=${verificationStatus ?? "-"} sandbox=${sandbox} amr=${amr} scopes="${cfg.scopes}"`;
   const text = `${acr ?? ""} ${ial ?? ""} ${aal ?? ""}`;
-  const claimsSayIal2 = /ial\/2|ial2|\b2\b/.test(text) || ial === 2 || ial === "2";
+  const claimsSayIal2 = /ial\/2|ial2/.test(text) || ial === 2 || ial === "2";
   const claimsSayAal2 = /aal\/2|aal2/.test(text) || aal === 2 || aal === "2";
   if (cfg.assuranceMode === "claims") {
-    return { ial: claimsSayIal2 ? "IAL2" : "IAL1", aal: claimsSayAal2 ? "AAL2" : "AAL1", evidence };
+    return { ial: claimsSayIal2 ? "IAL2" : "IAL1", aal: claimsSayAal2 ? "AAL2" : "AAL1", evidence: `${evidence} mode=claims` };
   }
-  const scopeAsksIal2 = /ial\/2|ial2/i.test(cfg.scopes) || /ial\/2|ial2/i.test(cfg.acrValues ?? "");
-  return { ial: scopeAsksIal2 || claimsSayIal2 ? "IAL2" : "IAL1", aal: scopeAsksIal2 || claimsSayAal2 ? "AAL2" : "AAL1", evidence: `${evidence} mode=scope` };
+  const policyAsksIal2 = /ial\/2|ial2/i.test(cfg.scopes) || /ial\/2|ial2/i.test(cfg.acrValues ?? "");
+  const clearVerified = id === "clear" && (verificationStatus === undefined || verificationStatus === "success");
+  const ok = claimsSayIal2 || policyAsksIal2 || clearVerified;
+  return { ial: ok ? "IAL2" : "IAL1", aal: ok || claimsSayAal2 ? "AAL2" : "AAL1", evidence: `${evidence} mode=scope` };
 }
 
 export function createOidcIdentityProvider(id: IdentityProviderId): IdentityProvider {
@@ -196,12 +237,16 @@ export function createOidcIdentityProvider(id: IdentityProviderId): IdentityProv
       if (d.userinfo_endpoint && tokens.access_token) {
         try {
           const ur = await fetch(d.userinfo_endpoint, { headers: { authorization: `Bearer ${tokens.access_token}`, accept: "application/json" }, cache: "no-store" });
-          if (ur.ok) attributes = (await ur.json()) as Record<string, string | undefined>;
+          if (ur.ok) {
+            const body = (await ur.text()).trim();
+            // ID.me returns the userinfo payload as a signed JWT string; others return JSON.
+            attributes = body.startsWith("{") ? (JSON.parse(body) as Record<string, string | undefined>) : (decodeJwt(body) as Record<string, string | undefined>);
+          }
         } catch {
           /* attributes are optional */
         }
       }
-      const a = assuranceFrom({ ...claims, ...attributes }, cfg);
+      const a = assuranceFrom({ ...claims, ...attributes }, cfg, id);
       return {
         ok: true,
         identity: {
