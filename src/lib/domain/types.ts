@@ -84,10 +84,34 @@ export interface Patient {
   diagnoses: Diagnosis[];
   /** EHR patient id at the partner clinic, if linked. */
   ehrPatientId?: string;
+  /** What the caregiver calls them ("mom"); used for voice in the caregiver face. */
+  term?: CareTerm;
   phone?: string;
 }
 
-export type CaregiverRelationship = "spouse" | "daughter" | "son" | "daughter_in_law" | "sibling" | "grandchild" | "friend_neighbor" | "other";
+export type CaregiverRelationship = "spouse" | "daughter" | "son" | "child" | "daughter_in_law" | "sibling" | "grandchild" | "friend_neighbor" | "other";
+
+/**
+ * How the caregiver refers to the person ("my mother"). Sets the app's voice during setup
+ * ("your mom's medicines") and maps to a relationship and, when it implies one, a sex.
+ */
+export type CareTerm = "mother" | "father" | "wife" | "husband" | "parent_in_law" | "sibling" | "grandparent" | "friend" | "other";
+
+/** Self-service add-patient flow in progress; lives on the account until the household is created. */
+export interface AddPatientDraft {
+  startedAt: ISODateTime;
+  term?: CareTerm;
+  patientFirstName?: string;
+  livesWith?: boolean;
+  localityFips?: string;
+  /** How the caregiver will get the Medicare data: she has the login; card but no account yet; no Medicare. */
+  route?: "login" | "card" | "none";
+  consent?: { basis: ConsentBasis; typedSignature: string; signedAt: ISODateTime; shareDirectory: boolean; shareEvaluator: boolean; attestedFrom?: string };
+  /** What Medicare returned, held until the caregiver confirms it is the right person. */
+  import?: MedicareImport;
+  /** Typed details, for the no-Medicare route. */
+  details?: { givenName: string; familyName: string; birthDate: ISODate; sex: "F" | "M"; coverage: "medicare" | "medicare_advantage" | "other" | "none" };
+}
 
 export type IdentityStatus = "not_started" | "pending" | "verified" | "failed" | "in_person_pending";
 
@@ -192,6 +216,7 @@ export interface CaregiverAccount {
   identity: CaregiverIdentity;
   registeredOn: ISODate;
   householdIds: string[];
+  pending?: AddPatientDraft;
 }
 
 export type ConsentBasis = "patient" | "poa_healthcare" | "legal_guardian";

@@ -1,6 +1,7 @@
 import { addCaregiverMedication, connectMedicare } from "@/app/actions";
 import { Field, Notice, Pill } from "@/components/ui";
 import { fmtDate, sortMedications } from "@/lib/engine";
+import { voice } from "@/lib/domain/care-terms";
 import { requireCare } from "@/lib/services/care-context";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,13 @@ export default async function CareMedications({ searchParams }: PageProps<"/care
     <div>
       <h1>{h.patient.givenName}&rsquo;s medicines</h1>
       <p className="mt-2 text-ink-2">One list, shared with the clinic. If a pharmacy or another doctor changes something, add it here and the clinic will confirm it at the next contact.</p>
+      {sp.welcome && (
+        <div className="mt-4">
+          <Notice kind="green">
+            {(() => { const t = voice(h.patient.term, h.patient.givenName).their; return t.charAt(0).toUpperCase() + t.slice(1); })()} record is open. Here is what Medicare says has been filled; the clinic will confirm each one at your first contact. Nothing was typed twice.
+          </Notice>
+        </div>
+      )}
       {sp.medicare === "ok" && <div className="mt-4"><Notice kind="green">Medicare records connected. Pharmacy fills now show next to the list.</Notice></div>}
       {(sp.medicare === "failed" || sp.medicare === "error") && <div className="mt-4"><Notice kind="amber">{sp.medicare === "error" ? "The Medicare connection could not start" : "Medicare authorization did not complete"}{sp.reason ? `: ${String(sp.reason)}` : ""}. You can try again any time.</Notice></div>}
 

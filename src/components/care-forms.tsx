@@ -49,17 +49,22 @@ export function VerifyBlock({ status, reason, sitePhone }: { status: string; rea
   );
 }
 
-const basisLabel: Record<ConsentBasis, { label: string; hint: string }> = {
-  patient: { label: "The person I care for agreed to this and can still make decisions", hint: "The clinic will confirm this with them." },
-  poa_healthcare: { label: "I hold a health care power of attorney", hint: "Bring or send a copy to the clinic. Southside Legal Aid can help if you do not have one." },
-  legal_guardian: { label: "I am the court-appointed guardian", hint: "The clinic will record the court order." },
-};
+/** The legal basis, asked as a question about the person rather than as a category. `them` is the caregiver's own word ("your mom"). */
+function basisChoices(them: string): Record<ConsentBasis, { label: string; hint: string }> {
+  const cap = them.charAt(0).toUpperCase() + them.slice(1);
+  return {
+    patient: { label: `${cap} knows I am setting this up and can agree to it`, hint: "The clinic will confirm this with them at your first contact." },
+    poa_healthcare: { label: `${cap} cannot decide things like this any more, and I have the paperwork (a health care power of attorney)`, hint: "Bring or send a copy to the clinic. Southside Legal Aid can help if you do not have one." },
+    legal_guardian: { label: "A court appointed me as guardian", hint: "The clinic will record the court order." },
+  };
+}
 
 /**
  * The authorization form. Rendered inside a parent <form>; the parent supplies the action and the submit button.
  * Fields: basis, typedSignature, shareDirectory, shareEvaluator, attest.
  */
-export function ConsentFields({ patientName, signerName, previous }: { patientName: string; signerName: string; previous?: ConsentRecord }) {
+export function ConsentFields({ patientName, signerName, previous, them }: { patientName: string; signerName: string; previous?: ConsentRecord; them?: string }) {
+  const basisLabel = basisChoices(them ?? "the person I care for");
   return (
     <div className="card-soft mt-6 space-y-5">
       <div>
@@ -73,7 +78,7 @@ export function ConsentFields({ patientName, signerName, previous }: { patientNa
         </div>
       ))}
       <fieldset>
-        <legend className="font-semibold">On what basis am I allowed to do this?</legend>
+        <legend className="font-semibold">Which of these is true?</legend>
         <div className="mt-2 space-y-2">
           {(Object.keys(basisLabel) as ConsentBasis[]).map((b) => (
             <label key={b} className="flex gap-3 items-start">

@@ -1,9 +1,10 @@
-import type { Household } from "@/lib/domain/types";
+import type { CaregiverAccount, Household } from "@/lib/domain/types";
+import { careTerm } from "@/lib/domain/care-terms";
 import { randomToken } from "../crypto";
 import { mapBlueButton } from "./fhir";
 import { createLiveBlueButtonAdapter } from "./live";
 import { syntheticBlueButton, type SyntheticProfile } from "./synthetic";
-import type { BlueButtonAdapter, BlueButtonCompleteResult, BlueButtonStartResult } from "./types";
+import type { BlueButtonAdapter, BlueButtonCompleteResult, BlueButtonStartResult, BlueButtonSubject } from "./types";
 
 export type * from "./types";
 export { coverageSummary, diagnosesFromImport, fillsFromImport, mapBlueButton } from "./fhir";
@@ -38,23 +39,70 @@ export function syntheticProfileFor(h: Household, asOf: string): SyntheticProfil
 }
 
 /**
- * Mock Blue Button: /mock/bluebutton plays Medicare.gov; completing it builds a synthetic bundle in
- * the sandbox's FHIR shapes for this household and runs it through the same mapper as live.
+ * The synthetic profile the mock uses while a caregiver is adding a patient and no household exists yet:
+ * built from the draft (first name, relationship, county). Deterministic by account id.
  */
-export function createMockBlueButtonAdapter(getHousehold: (id: string) => Promise<Household | undefined>, asOf: () => Promise<string>): BlueButtonAdapter {
+export function syntheticProfileForAccount(a: CaregiverAccount, asOf: string): SyntheticProfile {
+  const d = a.pending ?? { startedAt: asOf };
+  const t = careTerm(d.term);
+  const seed = [...a.id].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7);
+  const age = 76 + (seed % 13);
+  const birthYear = +asOf.slice(0, 4) - age;
+  const sameSurname = t.relationship === "child" || t.relationship === "spouse" || t.relationship === "sibling";
+  const surnames = ["Hodnett", "Pruett", "Dalton", "Shelton", "Yeatts", "Stowe", "Crews", "Boswell"];
+  return {
+    key: a.id,
+    givenName: d.patientFirstName || (t.sex === "M" ? "Earl" : "Mabel"),
+    familyName: sameSurname && a.familyName ? a.familyName : surnames[seed % surnames.length],
+    birthDate: `${birthYear}-${String(1 + (seed % 12)).padStart(2, "0")}-${String(1 + (seed % 27)).padStart(2, "0")}`,
+    gender: t.sex === "M" ? "male" : "female",
+    state: "51",
+    postalCode: "245",
+    dual: seed % 3 === 0,
+    dementiaCode: seed % 2 ? "G30.9" : "F03.90",
+    comorbidities: ["I10", seed % 2 ? "E11.9" : "E78.5"],
+    drugs: [
+      { ndc: "00093741501", name: "donepezil", strength: "10 mg" },
+      { ndc: "68180051301", name: "lisinopril", strength: "20 mg" },
+      { ndc: "00378395277", name: "atorvastatin", strength: "20 mg" },
+      ...(seed % 2 ? [{ ndc: "00093104801", name: "metformin", strength: "500 mg" }] : []),
+    ],
+    asOf,
+    edVisitDaysAgo: seed % 4 === 0 ? 20 + (seed % 40) : undefined,
+  };
+}
+
+export interface MockResolvers {
+  household: (id: string) => Promise<Household | undefined>;
+  account: (id: string) => Promise<CaregiverAccount | undefined>;
+  asOf: () => Promise<string>;
+}
+
+/**
+ * Mock Blue Button: /mock/bluebutton plays Medicare.gov; completing it builds a synthetic bundle in
+ * the sandbox's FHIR shapes for the subject and runs it through the same mapper as live.
+ */
+export function createMockBlueButtonAdapter(r: MockResolvers): BlueButtonAdapter {
   return {
     mode: "mock",
-    async start({ householdId, returnUrl }): Promise<BlueButtonStartResult> {
+    async start({ subject, returnUrl }): Promise<BlueButtonStartResult> {
       const state = randomToken(16);
-      return { redirectUrl: `/mock/bluebutton?state=${state}`, session: { state, householdId, returnUrl, startedAt: new Date().toISOString() } };
+      return { redirectUrl: `/mock/bluebutton?state=${state}`, session: { state, subject, returnUrl, startedAt: new Date().toISOString() } };
     },
     async complete({ params, session }): Promise<BlueButtonCompleteResult> {
       if (params.state !== session.state) return { ok: false, failureReason: "State mismatch." };
       if (params.code === "deny") return { ok: false, failureReason: "Authorization was declined on Medicare.gov (simulated)." };
-      const h = await getHousehold(session.householdId);
-      if (!h) return { ok: false, failureReason: "Household not found." };
-      const day = await asOf();
-      const bundle = syntheticBlueButton(syntheticProfileFor(h, day));
+      const day = await r.asOf();
+      let profile: SyntheticProfile | undefined;
+      if (session.subject.kind === "household") {
+        const h = await r.household(session.subject.householdId);
+        profile = h && syntheticProfileFor(h, day);
+      } else {
+        const a = await r.account(session.subject.accountId);
+        profile = a && syntheticProfileForAccount(a, day);
+      }
+      if (!profile) return { ok: false, failureReason: "Record not found." };
+      const bundle = syntheticBlueButton(profile);
       return { ok: true, patientRef: bundle.patient.id as string, import: mapBlueButton({ ...bundle, pulledOn: day, source: "mock", baseUrl: "mock://bluebutton" }) };
     },
   };
@@ -77,6 +125,6 @@ export function describeBlueButton(): { mode: "mock" | "live"; configError?: str
   }
 }
 
-export function getBlueButtonAdapter(getHousehold: (id: string) => Promise<Household | undefined>, asOf: () => Promise<string>): BlueButtonAdapter {
-  return blueButtonMode() === "live" ? createLiveBlueButtonAdapter() : createMockBlueButtonAdapter(getHousehold, asOf);
+export function getBlueButtonAdapter(r: MockResolvers): BlueButtonAdapter {
+  return blueButtonMode() === "live" ? createLiveBlueButtonAdapter() : createMockBlueButtonAdapter(r);
 }

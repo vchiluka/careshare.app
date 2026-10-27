@@ -7,7 +7,7 @@ import { getRepository } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-const relLabel: Record<string, string> = { spouse: "wife/husband", daughter: "daughter", son: "son", daughter_in_law: "daughter-in-law", sibling: "sister/brother", grandchild: "grandchild", friend_neighbor: "friend and neighbor", other: "family" };
+const relLabel: Record<string, string> = { spouse: "wife/husband", daughter: "daughter", son: "son", child: "son/daughter", daughter_in_law: "daughter-in-law", sibling: "sister/brother", grandchild: "grandchild", friend_neighbor: "friend and neighbor", other: "family" };
 
 export default async function CareSignIn() {
   const repo = getRepository();

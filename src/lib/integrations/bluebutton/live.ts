@@ -35,7 +35,7 @@ export function createLiveBlueButtonAdapter(): BlueButtonAdapter {
   const c = cfg();
   return {
     mode: "live",
-    async start({ householdId, returnUrl }): Promise<BlueButtonStartResult> {
+    async start({ subject, returnUrl }): Promise<BlueButtonStartResult> {
       const state = randomToken(24);
       const { verifier, challenge } = await pkcePair();
       const u = new URL(`${c.base}/v2/o/authorize/`);
@@ -46,7 +46,7 @@ export function createLiveBlueButtonAdapter(): BlueButtonAdapter {
       u.searchParams.set("scope", c.scopes);
       u.searchParams.set("code_challenge", challenge);
       u.searchParams.set("code_challenge_method", "S256");
-      return { redirectUrl: u.toString(), session: { state, codeVerifier: verifier, householdId, returnUrl, startedAt: new Date().toISOString() } };
+      return { redirectUrl: u.toString(), session: { state, codeVerifier: verifier, subject, returnUrl, startedAt: new Date().toISOString() } };
     },
     async complete({ params, session }): Promise<BlueButtonCompleteResult> {
       if (params.error) return { ok: false, failureReason: `${params.error}: ${params.error_description ?? ""}` };

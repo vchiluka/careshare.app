@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { signOutCaregiver } from "@/app/actions";
 import { VerifyBlock } from "@/components/care-forms";
 import { Notice, Pill } from "@/components/ui";
+import { voice } from "@/lib/domain/care-terms";
 import { requireAccount } from "@/lib/services/care-context";
 import { getRepository } from "@/lib/store";
 
@@ -39,16 +40,16 @@ export default async function Start({ searchParams }: PageProps<"/care/start">) 
             <VerifyBlock status={account.identity.status} reason={account.identity.failureReason} sitePhone={site.phone} />
           )}
         </Step>
-        <Step n={2} title="Add the person you care for and sign the authorization" state={verified ? "now" : "later"}>
-          <p className="text-sm text-ink-2">Their name and date of birth, how you are related, and a one-page authorization you sign by typing your name. It lasts 90 days and we remind you before it lapses.</p>
+        <Step n={2} title="Add the person you care for" state={verified ? "now" : "later"}>
+          <p className="text-sm text-ink-2">Who they are to you, a one-page authorization you sign by typing your name, then Medicare fills in the rest: their name, date of birth, coverage and every prescription filled. You type almost nothing. About ten minutes with the Medicare.gov login at hand.</p>
           {verified && (
             <Link href="/care/add-patient" className="btn btn-primary mt-3">
-              Add the person I care for
+              {account.pending?.term ? `Continue adding ${voice(account.pending.term, account.pending.patientFirstName).them}` : "Add the person I care for"}
             </Link>
           )}
         </Step>
-        <Step n={3} title="Connect their Medicare records" state="later">
-          <p className="text-sm text-ink-2">You will be sent to Medicare.gov to sign in as them or as their representative. We pull coverage, prescriptions filled, and recent visits so the clinic starts with facts instead of a blank page.</p>
+        <Step n={3} title="See what Medicare knows" state="later">
+          <p className="text-sm text-ink-2">The medicine list starts full, marked &ldquo;from Medicare, to be confirmed&rdquo;. The clinic for your county is told and confirms you as representative at your first contact.</p>
         </Step>
         <Step n={4} title="Look around" state="later">
           <p className="text-sm text-ink-2">

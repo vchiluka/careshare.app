@@ -14,10 +14,13 @@
 
 import type { MedicareImport } from "@/lib/domain/types";
 
+/** Who the pull is for: an existing household, or a caregiver account adding a patient (household not yet created). */
+export type BlueButtonSubject = { kind: "household"; householdId: string } | { kind: "account"; accountId: string };
+
 export interface BlueButtonSession {
   state: string;
   codeVerifier?: string;
-  householdId: string;
+  subject: BlueButtonSubject;
   returnUrl: string;
   startedAt: string;
 }
@@ -36,6 +39,6 @@ export interface BlueButtonCompleteResult {
 
 export interface BlueButtonAdapter {
   readonly mode: "mock" | "live";
-  start(input: { householdId: string; returnUrl: string }): Promise<BlueButtonStartResult>;
+  start(input: { subject: BlueButtonSubject; returnUrl: string }): Promise<BlueButtonStartResult>;
   complete(input: { params: Record<string, string | undefined>; session: BlueButtonSession }): Promise<BlueButtonCompleteResult>;
 }

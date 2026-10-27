@@ -8,10 +8,12 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import type { Appointment, CareTier, Caregiver, CaregiverAccount, CdrGlobal, ConsentBasis, ContactKind, FastStage, Household, Referral, ResourceCategory, StaffRole, SymptomKind } from "@/lib/domain/types";
-import { CLINICAL_LEAD_ROLES } from "@/lib/domain/types";
+import type { AddPatientDraft, Appointment, CareTerm, CareTier, Caregiver, CaregiverAccount, CdrGlobal, ConsentBasis, ContactKind, FastStage, Household, Referral, ResourceCategory, StaffRole, SymptomKind } from "@/lib/domain/types";
+import { CLINICAL_LEAD_ROLES, CONSENT_FORM_VERSION } from "@/lib/domain/types";
+import { CARE_TERMS, careTerm } from "@/lib/domain/care-terms";
+import { buildSelfRegisteredHousehold, patientFactsFromImport, type PatientFacts } from "@/lib/services/self-register";
 import { ALL_SCOPES, buildConsent, buildMonthlySummary, CADENCE_DAYS, computeSignals, determineTier, hasActiveConsent, phq2Total, primaryCaregiver, supersedeConsents, zbi12Total } from "@/lib/engine";
-import { getBlueButtonAdapter } from "@/lib/integrations/bluebutton";
+import { blueButtonMode, getBlueButtonAdapter } from "@/lib/integrations/bluebutton";
 import { getDirectoryAdapter } from "@/lib/integrations/directory";
 import { getEhrAdapter } from "@/lib/integrations/fhir";
 import { getIdentityProvider } from "@/lib/integrations/identity";
@@ -223,89 +225,128 @@ function readConsentForm(fd: FormData): { basis: ConsentBasis; typedSignature: s
   };
 }
 
-/**
- * A verified self-registered caregiver adds the person she cares for. This creates the household at the
- * clinic site for her county with nothing in it but what she typed, records her signed authorization,
- * and opens her own view (proxy self_attested). The clinic confirms her as representative later.
- */
-export async function addPatient(fd: FormData) {
+// ---------------- Caregiver: adding the person she cares for (Medicare first) ----------------
+
+async function requireVerifiedAccount(): Promise<{ a: CaregiverAccount; asOf: string }> {
   const { a, asOf } = await requireAccount();
+  if (!a.givenName || !a.localityFips) redirect("/care/register");
   if (a.identity.status !== "verified" || a.identity.assurance !== "IAL2") redirect("/care/start?error=verify_first");
+  return { a, asOf };
+}
+
+async function saveDraft(a: CaregiverAccount, patch: Partial<AddPatientDraft>) {
+  a.pending = { ...(a.pending ?? { startedAt: new Date().toISOString() }), ...patch };
+  await repo().upsertAccount(a);
+}
+
+/** Step 1: who, in the caregiver's words. Sets the voice for the rest of setup. */
+export async function draftWho(fd: FormData) {
+  const { a } = await requireVerifiedAccount();
+  const term = str(fd, "term") as CareTerm;
+  if (!CARE_TERMS.some((t) => t.term === term)) redirect("/care/add-patient?error=term");
+  const lives = str(fd, "livesWith") !== "no";
+  await saveDraft(a, { term, patientFirstName: str(fd, "patientFirstName") || undefined, livesWith: lives, localityFips: lives ? a.localityFips : str(fd, "localityFips") || a.localityFips });
+  redirect("/care/add-patient?step=access");
+}
+
+/** Step 2: how we will get their Medicare record. Routes the rest of the flow. */
+export async function draftAccess(fd: FormData) {
+  const { a } = await requireVerifiedAccount();
+  const route = str(fd, "route");
+  if (route !== "login" && route !== "card" && route !== "none") redirect("/care/add-patient?step=access&error=route");
+  await saveDraft(a, { route });
+  redirect(route === "card" ? "/care/add-patient?step=card" : "/care/add-patient?step=consent");
+}
+
+/** Step 3: the authorization, signed before anything is pulled. */
+export async function draftConsent(fd: FormData) {
+  const { a } = await requireVerifiedAccount();
   const form = readConsentForm(fd);
+  if (!form.attest || form.typedSignature.length < 3) redirect("/care/add-patient?step=consent&error=signature");
+  await saveDraft(a, { consent: { basis: form.basis, typedSignature: form.typedSignature.slice(0, 120), signedAt: new Date().toISOString(), shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() } });
+  await repo().audit({ actor: `account:${a.id}`, action: "consent.signed_draft", reference: `${form.basis}:v${CONSENT_FORM_VERSION}` });
+  redirect(a.pending?.route === "none" ? "/care/add-patient?step=details" : "/care/add-patient?step=medicare");
+}
+
+/** Step 4 (Medicare routes): hand off to Medicare.gov for the account; the callback parks the import on the draft. */
+export async function startDraftMedicare() {
+  const { a } = await requireVerifiedAccount();
+  if (!a.pending?.consent) redirect("/care/add-patient?step=consent");
+  const back = "/care/add-patient?step=medicare";
+  let adapter: ReturnType<typeof getBlueButtonAdapter>;
+  let r: Awaited<ReturnType<typeof adapter.start>>;
+  try {
+    adapter = getBlueButtonAdapter({ household: (id) => repo().household(id), account: (id) => repo().account(id), asOf: () => repo().asOf() });
+    r = await adapter.start({ subject: { kind: "account", accountId: a.id }, returnUrl: back });
+  } catch (e) {
+    const reason = (e as Error).message;
+    await repo().audit({ actor: `account:${a.id}`, action: "medicare.authorize_start_failed", detail: reason });
+    redirect(`${back}&medicare=error&reason=${encodeURIComponent(reason)}`);
+  }
+  await setFlowSession("bb", r.session);
+  await repo().audit({ actor: `account:${a.id}`, action: "medicare.authorize_start", reference: adapter.mode });
+  redirect(r.redirectUrl);
+}
+
+/** Step 4 (no-Medicare route): typed details. */
+export async function draftDetails(fd: FormData) {
+  const { a } = await requireVerifiedAccount();
   const givenName = str(fd, "givenName");
   const familyName = str(fd, "familyName");
   const birthDate = str(fd, "birthDate");
-  if (!givenName || !familyName || !birthDate) redirect("/care/add-patient?error=missing");
-  if (!form.attest || form.typedSignature.length < 3) redirect("/care/add-patient?error=signature");
+  if (!givenName || !familyName || !birthDate) redirect("/care/add-patient?step=details&error=missing");
+  const coverage = str(fd, "coverage");
+  const t = careTerm(a.pending?.term);
+  await saveDraft(a, { details: { givenName, familyName, birthDate, sex: (str(fd, "sex") as "F" | "M") || t.sex || "F", coverage: coverage === "medicare_advantage" || coverage === "other" || coverage === "none" ? coverage : "medicare" } });
+  redirect("/care/add-patient?step=confirm");
+}
+
+/** Step 5: "Is this your mom?" Confirmed → the household exists and the record is open. */
+export async function confirmAddPatient() {
+  const { a, asOf } = await requireVerifiedAccount();
+  const d = a.pending;
+  if (!d?.consent) redirect("/care/add-patient?step=consent");
+  const t = careTerm(d.term);
+  const facts: PatientFacts | undefined = d.import
+    ? patientFactsFromImport(d.import, t.sex)
+    : d.details
+      ? { givenName: d.details.givenName, familyName: d.details.familyName, birthDate: d.details.birthDate, sex: d.details.sex, coverage: { partA: d.details.coverage !== "none" && d.details.coverage !== "other", partB: d.details.coverage !== "none" && d.details.coverage !== "other", partC: d.details.coverage === "medicare_advantage", partD: d.details.coverage === "medicare" || d.details.coverage === "medicare_advantage", medicaid: false }, hasDementiaDiagnosis: true }
+      : undefined;
+  if (!facts) redirect("/care/add-patient?step=medicare");
   const sites = await repo().sites();
-  const localityFips = str(fd, "localityFips") || a.localityFips;
+  const localityFips = d.localityFips || a.localityFips;
   const site = sites.find((x) => x.localityFips === localityFips) ?? sites.find((x) => x.localityFips === a.localityFips) ?? sites[0];
-  const hid = newId("hh");
-  const cgId = newId("cg");
-  const lives = str(fd, "livesWith") === "on";
-  const consent = buildConsent({ id: newId("cons"), caregiverId: cgId, basis: form.basis, typedSignature: form.typedSignature, signedAt: new Date().toISOString(), asOf, shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() });
-  const h: Household = {
-    id: hid,
-    siteId: site.id,
-    origin: "self_registered",
-    patient: {
-      id: newId("pt"),
-      givenName,
-      familyName,
-      birthDate,
-      sex: (str(fd, "sex") as "F" | "M") || "F",
-      mbi: "SYNTHETIC",
-      coverage: { partA: true, partB: true, partC: false, partD: true, medicaid: str(fd, "medicaid") === "on" },
-      residence: lives ? "family_home" : "own_home",
-      localityFips,
-      diagnoses: str(fd, "hasDiagnosis") === "on" ? [{ code: "F03.90", display: "Dementia (type to be confirmed by the clinic)" }] : [],
-    },
-    caregivers: [
-      {
-        id: cgId,
-        accountId: a.id,
-        givenName: a.givenName,
-        familyName: a.familyName,
-        birthDate: a.birthDate,
-        relationship: (str(fd, "relationship") as Caregiver["relationship"]) || "daughter",
-        livesWithPatient: lives,
-        localityFips: a.localityFips,
-        phone: a.phone,
-        email: a.email,
-        access: a.access,
-        isPrimary: true,
-        identity: a.identity,
-        proxy: { status: "self_attested", requestedOn: asOf, consentBasis: form.basis, consentRecordedOn: asOf, scope: ALL_SCOPES },
-        health: { phq2: [], bp: [], zbi: [], hasHomeBpCuff: str(fd, "hasBpCuff") === "on" },
-        hoursPerWeek: num(fd, "hoursPerWeek") || (lives ? 40 : 10),
-      },
-    ],
-    consents: [consent],
-    status: "enrolling",
-    enrolledOn: asOf,
-    referralSource: "self",
-    carePlan: { tier: null, contactCadenceDays: 30, goals: [], watchFor: ["Sudden change in confusion", "Fall", "Not drinking or new trouble urinating", "Frightening behavior or trying to leave the house"], whoToCall: [{ label: `${site.orgName} (daytime)`, phone: site.phone }, { label: "Emergency", phone: "911" }] },
-    medications: [],
-    medicareFills: [],
-    medicare: { connected: false },
-    symptomLog: [],
-    appointments: [],
-    messages: [],
-    contacts: [],
-    referrals: [],
-    escalations: [],
-    edVisits: [],
-    summaries: [],
-  };
+  const ids = { household: newId("hh"), caregiver: newId("cg"), patient: newId("pt"), consent: newId("cons") };
+  const { h, consent } = buildSelfRegisteredHousehold({ ids, account: a, facts, site, asOf, imp: d.import, patientRef: d.import?.patient?.id, mode: blueButtonMode() });
   await repo().addHousehold(h);
-  a.householdIds.push(hid);
+  a.householdIds.push(h.id);
+  a.pending = undefined;
   await repo().upsertAccount(a);
-  await setCaregiverSession({ accountId: a.id, householdId: hid, caregiverId: cgId });
-  await repo().audit({ actor: `account:${a.id}`, action: "household.self_registered", householdId: hid, reference: site.id });
-  await repo().audit({ actor: `caregiver:${cgId}`, action: "consent.signed", householdId: hid, reference: `${consent.id}:${consent.basis}:v${consent.version}`, detail: consent.attestedFrom });
-  await refreshEscalations(hid);
-  revalidateAll(hid);
-  redirect("/care/connect?signed=1");
+  await setCaregiverSession({ accountId: a.id, householdId: h.id, caregiverId: ids.caregiver });
+  await repo().audit({ actor: `account:${a.id}`, action: "household.self_registered", householdId: h.id, reference: `${site.id}:${d.import ? "medicare_first" : "typed"}` });
+  await repo().audit({ actor: `caregiver:${ids.caregiver}`, action: "consent.signed", householdId: h.id, reference: `${consent.id}:${consent.basis}:v${consent.version}`, detail: consent.attestedFrom });
+  if (d.import) await repo().audit({ actor: `caregiver:${ids.caregiver}`, action: "medicare.connected", householdId: h.id, reference: `${h.medicare.mode}:${d.import.counts.eobs} claims (${d.import.counts.pde} pde), ${d.import.counts.coverages} coverages` });
+  await refreshEscalations(h.id);
+  revalidateAll(h.id);
+  redirect(d.import ? "/care/medications?welcome=1" : "/care/home?welcome=1");
+}
+
+/** "That is not the right person" on the confirmation screen, or start over. */
+export async function discardDraftImport() {
+  const { a } = await requireVerifiedAccount();
+  if (a.pending) {
+    a.pending.import = undefined;
+    a.pending.details = undefined;
+    await repo().upsertAccount(a);
+  }
+  redirect("/care/add-patient?step=medicare&medicare=wrong_person");
+}
+
+export async function cancelDraft() {
+  const { a } = await requireVerifiedAccount();
+  a.pending = undefined;
+  await repo().upsertAccount(a);
+  redirect("/care/start");
 }
 
 /** Sign the authorization again (first time for clinic-enrolled caregivers, or the 90-day re-affirmation). */
@@ -476,8 +517,8 @@ export async function connectMedicare() {
   let adapter: ReturnType<typeof getBlueButtonAdapter>;
   let r: Awaited<ReturnType<typeof adapter.start>>;
   try {
-    adapter = getBlueButtonAdapter((id) => repo().household(id), () => repo().asOf());
-    r = await adapter.start({ householdId: h.id, returnUrl: back });
+    adapter = getBlueButtonAdapter({ household: (id) => repo().household(id), account: (id) => repo().account(id), asOf: () => repo().asOf() });
+    r = await adapter.start({ subject: { kind: "household", householdId: h.id }, returnUrl: back });
   } catch (e) {
     const reason = (e as Error).message;
     await repo().audit({ actor: `caregiver:${c.id}`, action: "medicare.authorize_start_failed", householdId: h.id, detail: reason });
