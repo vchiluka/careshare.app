@@ -56,6 +56,13 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/identity/cal
     const acct = await repo.account(subj.accountId);
     if (!acct) return fail("verify=error&reason=account_missing");
     acct.identity = toIdentity(acct.identity, result.identity);
+    // Registration: take name and date of birth from the verified attributes once, if the vendor released them.
+    if (ial2 && result.identity && !acct.givenName) {
+      const at = result.identity.attributes;
+      if (at.givenName) acct.givenName = at.givenName;
+      if (at.familyName) acct.familyName = at.familyName;
+      if (at.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(at.birthDate)) acct.birthDate = at.birthDate;
+    }
     await repo.upsertAccount(acct);
     // Mirror onto any household caregiver entries linked to the account.
     for (const hid of acct.householdIds) {

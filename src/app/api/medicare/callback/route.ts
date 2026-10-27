@@ -29,5 +29,5 @@ export async function GET(req: NextRequest) {
   } else {
     await repo.audit({ actor: "system", action: "medicare.failed", householdId: session.householdId, reference: result.failureReason });
   }
-  return NextResponse.redirect(`${base}${session.returnUrl}?medicare=${result.ok ? "ok" : "failed"}`);
+  return NextResponse.redirect(`${base}${session.returnUrl}?medicare=${result.ok ? "ok" : "failed"}${result.ok ? "" : `&reason=${encodeURIComponent(result.failureReason ?? "")}`}`);
 }

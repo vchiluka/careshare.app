@@ -13,6 +13,7 @@ export default async function Start({ searchParams }: PageProps<"/care/start">) 
   const sp = await searchParams;
   const { session, account } = await requireAccount();
   if (session.householdId) redirect("/care/home");
+  if (!account.givenName || !account.localityFips) redirect("/care/register");
   const repo = getRepository();
   const [localities, sites, education] = await Promise.all([repo.localities(), repo.sites(), repo.education()]);
   const locality = localities.find((l) => l.fips === account.localityFips);

@@ -11,6 +11,7 @@ export default async function AddPatient({ searchParams }: PageProps<"/care/add-
   const sp = await searchParams;
   const { session, account } = await requireAccount();
   if (session.householdId) redirect("/care/home");
+  if (!account.givenName || !account.localityFips) redirect("/care/register");
   if (account.identity.status !== "verified" || account.identity.assurance !== "IAL2") redirect("/care/start?error=verify_first");
   const localities = (await getRepository().localities()).filter((l) => l.pilotPhase > 0).sort((a, b) => a.pilotPhase - b.pilotPhase || a.name.localeCompare(b.name));
   return (

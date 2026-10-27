@@ -140,30 +140,61 @@ export async function startVerification(fd: FormData) {
 
 // ---------------- Caregiver: self-service registration ----------------
 
-export async function registerCaregiver(fd: FormData) {
+/**
+ * Registration step 1: identity first. A provisional account is created (or the one in the session is
+ * reused), the session points at it, and the person is sent to CLEAR or ID.me. The callback marks the
+ * account verified and, when the vendor released them, fills name and date of birth from the verified
+ * attributes so the person does not retype what the vendor already checked.
+ */
+export async function startRegistration(fd: FormData) {
+  const providerId = str(fd, "provider") === "clear" ? "clear" : "idme";
   const asOf = await repo().asOf();
-  const givenName = str(fd, "givenName");
-  const familyName = str(fd, "familyName");
-  const birthDate = str(fd, "birthDate");
+  const s = await getCaregiverSession();
+  let a = s?.accountId ? await repo().account(s.accountId) : undefined;
+  if (!a) {
+    a = { id: newId("acct"), givenName: "", familyName: "", birthDate: "", phone: "", localityFips: "", access: { smartphone: true, broadband: "low", preferredChannel: "app" }, identity: { status: "not_started", attempts: 0 }, registeredOn: asOf, householdIds: [] };
+    await repo().upsertAccount(a);
+    await repo().audit({ actor: `account:${a.id}`, action: "account.registration_started", reference: providerId });
+  }
+  await setCaregiverSession({ accountId: a.id });
+  let provider: ReturnType<typeof getIdentityProvider>;
+  let result: Awaited<ReturnType<typeof provider.start>>;
+  try {
+    provider = getIdentityProvider(providerId);
+    result = await provider.start({ subject: { kind: "account", accountId: a.id }, returnUrl: "/care/register" });
+  } catch (e) {
+    const reason = (e as Error).message;
+    await repo().audit({ actor: `account:${a.id}`, action: "identity.start_failed", reference: providerId, detail: reason });
+    redirect(`/care/register?verify=error&reason=${encodeURIComponent(reason)}`);
+  }
+  await setFlowSession("proof", result.session);
+  a.identity = { ...a.identity, status: "pending", provider: providerId, attempts: a.identity.attempts + 1 };
+  await repo().upsertAccount(a);
+  await repo().audit({ actor: `account:${a.id}`, action: "identity.start", reference: `${providerId}:${provider.mode}:${result.state.slice(0, 8)}` });
+  redirect(result.redirectUrl);
+}
+
+/** Registration step 2, after verification: contact details and county. Name and date of birth are prefilled from the vendor when released. */
+export async function completeRegistration(fd: FormData) {
+  const { a } = await requireAccount();
+  if (a.identity.status !== "verified" || a.identity.assurance !== "IAL2") redirect("/care/register");
+  const givenName = str(fd, "givenName") || a.givenName;
+  const familyName = str(fd, "familyName") || a.familyName;
+  const birthDate = str(fd, "birthDate") || a.birthDate;
   const localityFips = str(fd, "localityFips");
   if (!givenName || !familyName || !birthDate || !localityFips) redirect("/care/register?error=missing");
   const smartphone = str(fd, "smartphone") === "on";
   const broadband = (str(fd, "broadband") as "ok" | "low" | "none") || "low";
-  const a: CaregiverAccount = {
-    id: newId("acct"),
+  Object.assign(a, {
     givenName,
     familyName,
     birthDate,
-    phone: str(fd, "phone") || "000-000-0000",
-    email: str(fd, "email") || undefined,
+    phone: str(fd, "phone") || a.phone || "000-000-0000",
+    email: str(fd, "email") || a.email,
     localityFips,
     access: { smartphone, broadband, preferredChannel: smartphone ? (broadband === "none" ? "sms" : "app") : "phone" },
-    identity: { status: "not_started", attempts: 0 },
-    registeredOn: asOf,
-    householdIds: [],
-  };
+  });
   await repo().upsertAccount(a);
-  await setCaregiverSession({ accountId: a.id });
   await repo().audit({ actor: `account:${a.id}`, action: "account.registered", reference: localityFips });
   revalidateAll();
   redirect("/care/start");
@@ -274,7 +305,7 @@ export async function addPatient(fd: FormData) {
   await repo().audit({ actor: `caregiver:${cgId}`, action: "consent.signed", householdId: hid, reference: `${consent.id}:${consent.basis}:v${consent.version}`, detail: consent.attestedFrom });
   await refreshEscalations(hid);
   revalidateAll(hid);
-  redirect("/care/home?welcome=1");
+  redirect("/care/connect?signed=1");
 }
 
 /** Sign the authorization again (first time for clinic-enrolled caregivers, or the 90-day re-affirmation). */
@@ -442,7 +473,7 @@ export async function connectMedicare() {
   const { h, c, asOf } = await requireCaregiver();
   if (!recordOpen(h, c, asOf) || !c.proxy.scope.includes("medicare_records")) redirect("/care/home");
   const adapter = getBlueButtonAdapter((id) => repo().household(id), () => repo().asOf());
-  const r = await adapter.start({ householdId: h.id, returnUrl: "/care/medications" });
+  const r = await adapter.start({ householdId: h.id, returnUrl: h.origin === "self_registered" && !h.medicare.connected ? "/care/connect" : "/care/medications" });
   await setFlowSession("bb", r.session);
   await repo().audit({ actor: `caregiver:${c.id}`, action: "medicare.authorize_start", householdId: h.id, reference: adapter.mode });
   redirect(r.redirectUrl);

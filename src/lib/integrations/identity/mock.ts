@@ -31,7 +31,7 @@ export function createMockIdentityProvider(brand: IdentityProviderId): IdentityP
           assuranceLevel: "IAL2",
           authenticatorLevel: "AAL2",
           verifiedOn: new Date().toISOString().slice(0, 10),
-          attributes: { givenName: "Mock", familyName: "Verified" },
+          attributes: session.subject.kind === "account" ? {} : { givenName: "Mock", familyName: "Verified" },
           evidence: "mock: simulated IAL2/AAL2 success",
         },
       };

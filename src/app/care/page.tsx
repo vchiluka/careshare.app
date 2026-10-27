@@ -24,7 +24,8 @@ export default async function CareSignIn() {
     if (await repo.account(s.accountId)) redirect("/care/start");
     stale = true;
   }
-  const [hs, localities, accounts] = await Promise.all([repo.households(), repo.localities(), repo.accounts()]);
+  const [hs, localities, allAccounts] = await Promise.all([repo.households(), repo.localities(), repo.accounts()]);
+  const accounts = allAccounts.filter((a) => a.givenName); // provisional accounts (verification started, details not yet entered) stay hidden
   const featured = ["hh_hairston", "hh_tuck", "hh_simms", "hh_motley", "hh_adkins"];
   const rows = hs
     .filter((h) => h.caregivers.length > 0)
