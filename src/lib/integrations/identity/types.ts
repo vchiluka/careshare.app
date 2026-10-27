@@ -19,9 +19,9 @@
 export type IdentityProviderId = "idme" | "clear";
 
 export interface StartProofingInput {
-  caregiverId: string;
-  householdId: string;
-  /** Where to send the caregiver after the callback has been processed. */
+  /** Who is being proofed. Exactly one of these is set. */
+  subject: { kind: "caregiver"; caregiverId: string; householdId: string } | { kind: "account"; accountId: string } | { kind: "staff"; email?: string; name?: string };
+  /** Where to send the person after the callback has been processed. */
   returnUrl: string;
 }
 
@@ -39,8 +39,7 @@ export interface ProofingSession {
   state: string;
   nonce?: string;
   codeVerifier?: string;
-  caregiverId: string;
-  householdId: string;
+  subject: StartProofingInput["subject"];
   returnUrl: string;
   startedAt: string;
 }

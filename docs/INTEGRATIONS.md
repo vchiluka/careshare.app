@@ -50,7 +50,9 @@ That is all CLEAR needs. CLEAR Verified publishes fixed endpoints and no discove
 
 ## 2. Blue Button 2.0
 
-OAuth 2.0 authorization code with PKCE against `sandbox.bluebutton.cms.gov` (synthetic beneficiaries) or production. The person consents on Medicare.gov. Redirect URI `/api/medicare/callback`. At the callback the adapter pulls `ExplanationOfBenefit?type=pde` (Part D fills: NDC, display, service date, days supply) and `Coverage`, writes them to the household, and discards the token. Refresh tokens and a monthly re-pull need the Postgres store (encrypted token table).
+OAuth 2.0 authorization code with PKCE against `sandbox.bluebutton.cms.gov` (synthetic beneficiaries) or production. The person consents on Medicare.gov. Redirect URI `/api/medicare/callback`. At the callback the adapter pulls `Patient`, `Coverage` and every `ExplanationOfBenefit` (paginated, `BB_MAX_PAGES`), maps them through `bluebutton/fhir.ts` into `MedicareImport` (CARIN BB shapes: coverage parts and dual-eligibility codes from the `dual_01..12` extensions, EOB type from the `type` coding, diagnoses, procedures, line items with adjudication amounts, Part D fills with NDC, days supply and refill number), writes it to the household via `services/medicare-apply.ts`, and discards the token. Apply rules: fills refresh the reconciliation list and coverage flags always; when the household has no clinic-entered diagnoses or medications (self-registered), the import seeds them, marked `source: "medicare"` / `status: "unverified"` so the clinic confirms or stops each one. Refresh tokens and a monthly re-pull need the encrypted token table.
+
+The mock (`bluebutton/synthetic.ts`) emits the same FHIR R4 resources the sandbox returns for a household (deterministic by household id), so the mapper and the apply rules are the code that will run live; only the transport changes. Registering a sandbox app takes a CMS developer account and about ten minutes; set the four `BB_*` variables and `BLUEBUTTON_ADAPTER=live`.
 
 Env: `BLUEBUTTON_ADAPTER=live`, `BB_CLIENT_ID`, `BB_CLIENT_SECRET`, `BB_REDIRECT_URI`, `BB_BASE_URL` (default sandbox), `BB_SCOPES`.
 
@@ -70,10 +72,14 @@ Mock listings carry VirginiaNavigator-style listing ids and county coverage. The
 
 Mock writes to an in-memory outbox shown on `/clinic/integrations`. Twilio adapter sends via the REST API. Bodies carry no clinical content; links point to the gated app.
 
-## 6. Persistent store (first production step)
+## 6. Persistent store
 
-Drizzle over Postgres (Neon). Tables mirror `domain/types.ts` (households as JSONB plus indexed columns for locality, site, status; audit append-only; encrypted tokens). `asOf()` reads `DEMO_AS_OF` if set, else today. The memory driver stays the default for development.
+`store/postgres.ts` runs on Neon serverless Postgres (`@neondatabase/serverless`, HTTP driver, no pool to manage on Vercel). Three tables: `cs_documents(kind, id, data jsonb)` for households, staff and caregiver accounts; `cs_audit` append-only; `cs_meta`. Reference data (localities, sites, resources, education) comes from the seed file. On first request with an empty database the driver creates the tables and loads the seed; `Reset demo data` wipes and reseeds. Selection is automatic: `DATABASE_URL` set → postgres, else memory; `STORE_DRIVER` overrides. Create the database from the Vercel project (Storage → Create Database → Neon); Vercel injects `DATABASE_URL`. Encrypted token storage for Blue Button refresh tokens is the next addition.
+
+## 7. Staff sign-in through a CSP
+
+Clinic staff use the same CLEAR / ID.me integration as caregivers (`subject.kind = "staff"` in the proofing session). A new subject creates a `StaffUser` with `status: "pending"` and no role beyond `ma`; the pending page is all they can reach until an administrator approves them on `/clinic/admin`, setting role, site and admin flag. Returning subjects are matched on the CSP subject id. The demo role picker stays for the walkthrough and is replaced by the clinic's SSO (or CSP-only sign-in) in production.
 
 ## Order of work
 
-1. CLEAR and ID.me sandboxes (credentials in hand). 2. Postgres store. 3. Blue Button sandbox. 4. Partner EHR FHIR read, then write. 5. Hospital ADT feed (partner-reported ED visits today). 6. Directory data feed. 7. Evaluator export.
+1. CLEAR and ID.me sandboxes (done; credentials in Vercel env). 2. Neon Postgres (driver done; create the database in Vercel). 3. Blue Button sandbox (mapper and mock done; register the app). 4. Partner EHR FHIR read, then write. 5. Hospital ADT feed (partner-reported ED visits today). 6. Directory data feed. 7. Evaluator export.

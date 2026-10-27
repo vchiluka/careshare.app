@@ -12,6 +12,12 @@ Caregiver window: sign in as Tamika. She is not verified; her last remote attemp
 
 Clinic window: Proxy confirmations. Tamika is in the queue. Confirm with "Health care POA on file". Back in the caregiver window, refresh: the whole record opens. Line to land: "She did that once. Not per provider, not on paper, and the clinic chose the consent basis."
 
+## 1b. From nothing (2 minutes) — Regina Shaw, who found the app herself
+
+Caregiver window: on the sign-in page pick Regina Shaw under "Caregivers who registered themselves" (or press Register and make a new one). She has no record. Verify with CLEAR (stand-in page). Press "Add the person I care for": name, date of birth, relationship, then the one-page authorization: choose the basis, type her name, sign. The record opens, empty except for a getting-started list. Press Connect Medicare; the stand-in Medicare.gov page; allow. Medicines now shows what the pharmacy filled, each marked "from Medicare, unverified", and the diagnosis list is seeded from claims. Line to land: "Nothing was typed twice. The clinic will meet this family with a filled-in chart, not a blank one."
+
+Clinic window: Today now shows one household without a clinical lead. Dr. Pannell (the administrator) opens Admin, assigns Jamal Whitlow, and the household moves onto his list. Later, on the household's Caregiver tab, the clinic confirms Regina as representative; until then the pill says "self-attested".
+
 ## 2. The kitchen table (3 minutes) — Denise, caring for Mabel Hairston
 
 Caregiver window: sign in as Denise. Home shows Wednesday's wellness visit with no ride, and the messages. Open Medicines: the clinic wants to check quetiapine (filled under Medicare, not on the list) and lisinopril (listed, not filled since spring). Open Log: record a fall, moderate, "slipped on the porch step". Open My check-in: answer the twelve strain questions; her score goes high.
@@ -29,6 +35,10 @@ Line to land: "Seven in ten of these caregivers have a chronic condition. We mea
 ## 4. The clinic's month (1.5 minutes)
 
 Household → Monthly summary and documentation: contacts and minutes by stream, check-ins, symptoms, reconciliation, strain and mood. Generate and file. "This is the evidence for whatever the clinic bills after the pilot; during the pilot, nothing is billed through CareShare."
+
+## 4b. The ninety-day re-prompt (30 seconds) — Geneva, caring for Clarence Adkins
+
+Sign in as Geneva. Her authorization was signed 94 days ago and has lapsed, so the record is closed and she is asked to sign again; her own check-in still works. Sign; it reopens. Denise's, signed 83 days ago, shows the amber "lapses in 6 days" banner instead.
 
 ## 5. What the pilot reports (1 minute)
 

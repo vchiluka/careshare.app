@@ -29,7 +29,10 @@ export interface Locality {
   pilotPhase: 0 | 1 | 2 | 3;
 }
 
-export type StaffRole = "physician" | "np_pa" | "rn" | "ma" | "coordinator" | "ot" | "behavioral_health";
+export type StaffRole = "physician" | "np_pa" | "rn" | "ma" | "coordinator" | "ot" | "behavioral_health" | "admin";
+
+/** Roles that may be assigned as the clinical lead for a household. */
+export const CLINICAL_LEAD_ROLES: StaffRole[] = ["physician", "np_pa", "rn"];
 
 export interface StaffUser {
   id: string;
@@ -37,6 +40,15 @@ export interface StaffUser {
   role: StaffRole;
   siteId: string;
   credentials?: string;
+  /** May approve staff, assign clinical leads, manage sites. */
+  isAdmin?: boolean;
+  /** pending = verified with CLEAR/ID.me but not yet approved by an admin; sees nothing. */
+  status: "active" | "pending" | "disabled";
+  /** Identity proofing when the person signed in through a CSP rather than the demo picker. */
+  identity?: { provider: "clear" | "idme"; subject: string; assurance: "IAL1" | "IAL2"; verifiedOn: ISODate };
+  email?: string;
+  approvedBy?: string;
+  approvedOn?: ISODate;
 }
 
 export interface ClinicSite {
@@ -91,7 +103,12 @@ export interface CaregiverIdentity {
   attempts: number;
 }
 
-export type ProxyStatus = "not_requested" | "requested" | "confirmed" | "revoked";
+/**
+ * not_requested → requested → confirmed (by clinic staff) | revoked.
+ * self_attested: the caregiver signed the authorization form herself after identity proofing (self-service
+ * registration). It opens her own view of what she and Medicare supplied; clinic confirmation upgrades it.
+ */
+export type ProxyStatus = "not_requested" | "requested" | "self_attested" | "confirmed" | "revoked";
 
 export type ProxyScope = "care_plan" | "medications" | "appointments" | "messages" | "medicare_records" | "symptom_log";
 
@@ -154,7 +171,51 @@ export interface Caregiver {
   proxy: ProxyRelationship;
   health: CaregiverHealth;
   hoursPerWeek: number;
+  email?: string;
+  /** Set when this caregiver came through self-service registration. */
+  accountId?: string;
 }
+
+/**
+ * A caregiver who registered herself, before (or independent of) any household. Identity proofing
+ * happens here; adding a patient copies the account into a Household.caregivers entry and links back.
+ */
+export interface CaregiverAccount {
+  id: string;
+  givenName: string;
+  familyName: string;
+  birthDate: ISODate;
+  phone: string;
+  email?: string;
+  localityFips: string;
+  access: Caregiver["access"];
+  identity: CaregiverIdentity;
+  registeredOn: ISODate;
+  householdIds: string[];
+}
+
+export type ConsentBasis = "patient" | "poa_healthcare" | "legal_guardian";
+
+/** The signed authorization to access and share health information. Re-affirmed every 90 days. */
+export interface ConsentRecord {
+  id: string;
+  caregiverId: string;
+  version: string; // form version, e.g. "2026-10"
+  basis: ConsentBasis;
+  typedSignature: string;
+  signedAt: ISODateTime;
+  expiresOn: ISODate;
+  scopes: ProxyScope[];
+  /** What the caregiver agreed may be shared: the clinic always; others opt-in. */
+  shareWith: { clinic: true; directoryPartner: boolean; evaluator: boolean };
+  status: "active" | "expired" | "revoked" | "superseded";
+  revokedAt?: ISODateTime;
+  /** Request fingerprint for the audit trail: truncated IP and user agent family, no more. */
+  attestedFrom?: string;
+}
+
+export const CONSENT_VALID_DAYS = 90;
+export const CONSENT_FORM_VERSION = "2026-10";
 
 // ---------- Clinical content ----------
 
@@ -356,6 +417,92 @@ export interface MedicareConnection {
   mode?: "mock" | "live";
   /** Who authorized: the beneficiary, or a verified caregiver acting as representative. */
   authorizedBy?: "patient" | "representative";
+  /** Blue Button FHIR Patient id (not the MBI). */
+  patientRef?: string;
+}
+
+// ---------- Medicare data as Blue Button 2.0 returns it (FHIR R4, normalized) ----------
+
+export interface BbCoding {
+  system?: string;
+  code: string;
+  display?: string;
+}
+
+/** FHIR Patient from Blue Button (demographics only; identifiers reduced to the BB patient id). */
+export interface BbPatient {
+  id: string;
+  givenName?: string;
+  familyName?: string;
+  birthDate?: ISODate;
+  gender?: "male" | "female" | "other" | "unknown";
+  deceasedDate?: ISODate;
+  address?: { state?: string; postalCode?: string; county?: string };
+  /** Race / ethnicity extensions are intentionally not stored. */
+}
+
+export type BbCoverageType = "Part A" | "Part B" | "Part C" | "Part D" | "Unknown";
+
+/** FHIR Coverage from Blue Button: one per part, with CMS extensions summarized. */
+export interface BbCoverage {
+  id: string;
+  type: BbCoverageType;
+  status: "active" | "cancelled" | "draft" | "entered-in-error";
+  periodStart?: ISODate;
+  periodEnd?: ISODate;
+  payor?: string;
+  /** Monthly dual-eligibility code from the coverage extensions (e.g. "02" full dual); "00"/"NA" = none. */
+  dualCode?: string;
+  /** Medicare status code (aged, disabled, ESRD) when present. */
+  medicareStatusCode?: string;
+  /** Part D: low-income subsidy and plan contract/PBP when present. */
+  partDContract?: string;
+  partDPbp?: string;
+  lowIncomeSubsidy?: string;
+  /** Part C: MA plan contract when present. */
+  partCContract?: string;
+}
+
+export type BbEobType = "pde" | "carrier" | "dme" | "inpatient" | "outpatient" | "snf" | "hha" | "hospice" | "unknown";
+
+export interface BbEobItem {
+  sequence: number;
+  productOrService?: BbCoding; // NDC for PDE, HCPCS/CPT for Part B
+  servicedDate?: ISODate;
+  servicedEnd?: ISODate;
+  quantity?: number;
+  /** Adjudication amounts, in dollars, by category code (e.g. "submitted", "benefit", "paidtopatient"). */
+  amounts: Record<string, number>;
+  locationCode?: string;
+}
+
+/** FHIR ExplanationOfBenefit from Blue Button, reduced to what care coordination uses. */
+export interface BbEob {
+  id: string;
+  type: BbEobType;
+  status?: string;
+  billablePeriodStart?: ISODate;
+  billablePeriodEnd?: ISODate;
+  /** Attending / prescribing / rendering provider as NPI + display when present. */
+  provider?: { npi?: string; display?: string };
+  facility?: { display?: string; typeCode?: string };
+  diagnoses: { sequence: number; coding: BbCoding; type?: string }[]; // ICD-10-CM
+  procedures: { sequence: number; coding: BbCoding; date?: ISODate }[];
+  items: BbEobItem[];
+  /** PDE only: days supply, fill number, pharmacy, prescriber. */
+  pharmacy?: { daysSupply?: number; fillNumber?: number; pharmacyNpi?: string; prescriberNpi?: string; brandGeneric?: string };
+  totals: Record<string, number>; // e.g. submitted, benefit, paidbypatient
+}
+
+export interface MedicareImport {
+  pulledOn: ISODate;
+  source: "mock" | "live";
+  baseUrl?: string;
+  patient?: BbPatient;
+  coverages: BbCoverage[];
+  eobs: BbEob[];
+  /** Counts for the summary line and the integrations page. */
+  counts: { coverages: number; eobs: number; pde: number; carrier: number; institutional: number };
 }
 
 export interface MonthlySummary {
@@ -378,9 +525,15 @@ export type HouseholdStatus = "invited" | "enrolling" | "active" | "paused" | "c
 
 export interface Household {
   id: string;
+  /** Site the household is assigned to. Self-registered households start at the site for their locality. */
   siteId: string;
+  /** Staff id of the clinical lead (physician, NP/PA or RN). Unassigned until an admin assigns one. */
+  assignedLeadStaffId?: string;
+  assignedOn?: ISODate;
+  origin: "clinic_enrolled" | "self_registered";
   patient: Patient;
   caregivers: Caregiver[];
+  consents: ConsentRecord[];
   status: HouseholdStatus;
   enrolledOn?: ISODate;
   referralSource: "clinic" | "directory" | "aaa" | "hospital_discharge" | "self";
@@ -390,6 +543,8 @@ export interface Household {
   /** Medicare Part D fills as pulled from claims; drives reconciliation against the clinic list. */
   medicareFills: { ndc: string; name: string; strength: string; fillOn: ISODate; daysSupply: number }[];
   medicare: MedicareConnection;
+  /** Everything Blue Button returned, normalized. medicareFills is derived from its PDE claims. */
+  medicareImport?: MedicareImport;
   medReconciliationCompletedOn?: ISODate;
   symptomLog: SymptomEntry[];
   appointments: Appointment[];
@@ -414,6 +569,22 @@ export interface AuditEntry {
   detail?: string;
 }
 
+export type EducationTopic = "understanding_dementia" | "daily_care" | "behaviors" | "safety" | "medications" | "caregiver_health" | "medicare_medicaid" | "planning_ahead" | "respite";
+
+export interface EducationItem {
+  id: string;
+  topic: EducationTopic;
+  title: string;
+  summary: string;
+  /** Short plain-language body, paragraphs separated by blank lines. */
+  body: string;
+  minutes: number;
+  /** FAST stages it is most useful for; empty = all. */
+  stages: FastStage[];
+  /** Source the content is adapted from, for the footer. */
+  source: string;
+}
+
 export interface SeedData {
   generatedOn: ISODate;
   asOf: ISODate;
@@ -421,5 +592,7 @@ export interface SeedData {
   sites: ClinicSite[];
   staff: StaffUser[];
   resources: CommunityResource[];
+  education: EducationItem[];
+  accounts: CaregiverAccount[];
   households: Household[];
 }

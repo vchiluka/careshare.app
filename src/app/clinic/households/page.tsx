@@ -7,12 +7,14 @@ import { loadRoster } from "@/lib/services/household-view";
 export const dynamic = "force-dynamic";
 
 export default async function Households({ searchParams }: PageProps<"/clinic/households">) {
-  await requireClinic();
+  const me = await requireClinic();
   const sp = await searchParams;
-  const { rows, localities } = await loadRoster();
+  const { rows, localities, staff } = await loadRoster();
   const loc = typeof sp.locality === "string" ? sp.locality : "";
   const status = typeof sp.status === "string" ? sp.status : "";
-  const filtered = rows.filter((r) => (!loc || r.h.patient.localityFips === loc) && (!status || r.h.status === status));
+  const lead = typeof sp.lead === "string" ? sp.lead : "";
+  const filtered = rows.filter((r) => (!loc || r.h.patient.localityFips === loc) && (!status || r.h.status === status) && (!lead || (lead === "unassigned" ? !r.h.assignedLeadStaffId : r.h.assignedLeadStaffId === lead)));
+  const staffById = Object.fromEntries(staff.map((s) => [s.id, s]));
   return (
     <div>
       <h1>Households</h1>
@@ -40,6 +42,19 @@ export default async function Households({ searchParams }: PageProps<"/clinic/ho
             ))}
           </select>
         </label>
+        <label className="field">
+          <span>Clinical lead</span>
+          <select name="lead" defaultValue={lead}>
+            <option value="">All</option>
+            <option value={me.id}>Mine</option>
+            <option value="unassigned">Unassigned</option>
+            {staff.filter((s) => s.status === "active" && s.id !== me.id && rows.some((r) => r.h.assignedLeadStaffId === s.id)).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <button className="btn btn-secondary">Filter</button>
         <span className="text-sm text-ink-3 ml-auto tnum">{filtered.length} households</span>
       </form>
@@ -49,6 +64,7 @@ export default async function Households({ searchParams }: PageProps<"/clinic/ho
             <th>Patient</th>
             <th>Caregiver</th>
             <th>Locality</th>
+            <th>Lead</th>
             <th>Tier</th>
             <th>Cadence</th>
             <th>Signals</th>
@@ -83,7 +99,11 @@ export default async function Households({ searchParams }: PageProps<"/clinic/ho
                     <span className="text-ink-3">Lives alone</span>
                   )}
                 </td>
-                <td className="text-ink-2">{r.localityName}</td>
+                <td className="text-ink-2">
+                  {r.localityName}
+                  {r.h.origin === "self_registered" && <div className="text-xs text-ink-3">self-registered</div>}
+                </td>
+                <td className="text-sm">{r.h.assignedLeadStaffId ? staffById[r.h.assignedLeadStaffId]?.name ?? r.h.assignedLeadStaffId : <Pill kind="amber">unassigned</Pill>}</td>
                 <td>
                   <TierPill tier={r.h.carePlan.tier} />
                 </td>

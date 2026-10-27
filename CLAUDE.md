@@ -8,7 +8,7 @@ A Next.js 16 app with two faces over one household record: CareShare Caregiver (
 
 ## Non-negotiables
 
-1. **Caregiver access is gated on identity and proxy, in that order.** Nothing from the record renders unless `identity.status === "verified"` at IAL2 **and** `proxy.status === "confirmed"` by clinic staff with a consent basis recorded. There is no skip path, no demo bypass, no cookie that stands in for either. In-person verification is a staff-attested proofing event, not a shortcut. Use the mock vendor pages for demos.
+1. **Caregiver access is gated on identity, proxy and consent, in that order.** Nothing from the record renders unless `identity.status === "verified"` at IAL2, **and** `proxy.status` is `confirmed` by clinic staff (or `self_attested` from self-service registration until the clinic confirms), **and** the caregiver's signed authorization (`consents`, 90-day validity) is active. `caregiverAccess()` in `services/household-view.ts` is the one place this is decided. There is no skip path, no demo bypass, no cookie that stands in for any of the three. In-person verification is a staff-attested proofing event, not a shortcut. Use the mock vendor pages for demos. Clinic staff who arrive through CLEAR/ID.me are `pending` until an admin approves them; `requireClinic()` enforces it.
 2. **No program dependency.** The tier and cadence structure is adapted from published CMS dementia care-management requirements and is documented as such in `engine/tiering.ts`. Do not add model enrollment, alignment files, or billing logic. The word GUIDE appears only in that citation. Documentation streams in contacts are evidence, not claims.
 3. **The platform never diagnoses.** A positive PHQ-2, an elevated blood pressure, a high ZBI are routed with a next step and recorded as routed; they are never stored as a condition. Keep `signals.ts` wording to "screen", "reading", "strain".
 4. **Synthetic data only.** Nothing under `data/` may be derived from real people. The seed comes from `scripts/generate-seed.ts` with a fixed PRNG; regenerate, never hand-edit. Real localities are allowed because the pilot plan names them; real organizations are not.
@@ -30,7 +30,8 @@ A Next.js 16 app with two faces over one household record: CareShare Caregiver (
 - **A new rule:** pure function in `engine/`, doc comment with the clinical source, test in `__tests__`, surface through `computeSignals` or `outcomeReport`; only then a page.
 - **A new page:** server component, `force-dynamic`, read through `src/lib/services`, mutate through `src/app/actions.ts` (audit entry required). Use `ui.tsx` components; no component library.
 - **A live adapter:** implement the interface in `<vendor>.ts`, read config from env, register in the `get*()` switch, document variables in `.env.example`, `docs/INTEGRATIONS.md`, and `/clinic/integrations`. Keep the mock working.
-- **A persistent store:** implement `Repository` in `src/lib/store/postgres.ts`; memory stays the default for `npm run dev`.
+- **The store:** `src/lib/store/postgres.ts` (Neon, JSONB documents) is used when `DATABASE_URL` is set; memory stays the default for `npm run dev`. Any new document kind goes through `Repository` so both drivers stay equivalent.
+- **Education content:** `src/lib/content/education.ts`, paraphrased from public-domain guidance with the source named; no verbatim copying.
 
 ## Commands
 

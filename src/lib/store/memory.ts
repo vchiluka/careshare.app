@@ -1,25 +1,34 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { AuditEntry, Household, SeedData } from "@/lib/domain/types";
+import type { AuditEntry, CaregiverAccount, Household, SeedData, StaffUser } from "@/lib/domain/types";
 import type { Repository } from "./repository";
 
 interface State {
   seed: SeedData;
   households: Map<string, Household>;
+  staff: Map<string, StaffUser>;
+  accounts: Map<string, CaregiverAccount>;
   audit: AuditEntry[];
   counter: number;
 }
 
 const g = globalThis as unknown as { __careshareStore?: State };
 
-function loadSeed(): SeedData {
+export function loadSeed(): SeedData {
   const p = path.join(process.cwd(), "data", "seed", "seed.json");
   return JSON.parse(readFileSync(p, "utf8")) as SeedData;
 }
 
 function fresh(): State {
   const seed = loadSeed();
-  return { seed, households: new Map(seed.households.map((h) => [h.id, structuredClone(h)])), audit: [], counter: 0 };
+  return {
+    seed,
+    households: new Map(seed.households.map((h) => [h.id, structuredClone(h)])),
+    staff: new Map(seed.staff.map((s) => [s.id, structuredClone(s)])),
+    accounts: new Map(seed.accounts.map((a) => [a.id, structuredClone(a)])),
+    audit: [],
+    counter: 0,
+  };
 }
 
 function state(): State {
@@ -39,11 +48,31 @@ export function createMemoryRepository(): Repository {
     async sites() {
       return state().seed.sites;
     },
-    async staff() {
-      return state().seed.staff;
+    async education() {
+      return state().seed.education;
     },
     async resources() {
       return state().seed.resources;
+    },
+    async staff() {
+      return [...state().staff.values()].map((s) => structuredClone(s));
+    },
+    async staffMember(id) {
+      const s = state().staff.get(id);
+      return s ? structuredClone(s) : undefined;
+    },
+    async upsertStaff(s) {
+      state().staff.set(s.id, structuredClone(s));
+    },
+    async accounts() {
+      return [...state().accounts.values()].map((a) => structuredClone(a));
+    },
+    async account(id) {
+      const a = state().accounts.get(id);
+      return a ? structuredClone(a) : undefined;
+    },
+    async upsertAccount(a) {
+      state().accounts.set(a.id, structuredClone(a));
     },
     async households() {
       return [...state().households.values()].map((h) => structuredClone(h));

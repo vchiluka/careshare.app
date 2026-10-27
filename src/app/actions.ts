@@ -6,9 +6,11 @@
  */
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import type { Appointment, CareTier, Caregiver, CdrGlobal, ContactKind, FastStage, Household, ProxyScope, Referral, ResourceCategory, SymptomKind } from "@/lib/domain/types";
-import { buildMonthlySummary, CADENCE_DAYS, computeSignals, determineTier, phq2Total, primaryCaregiver, zbi12Total } from "@/lib/engine";
+import type { Appointment, CareTier, Caregiver, CaregiverAccount, CdrGlobal, ConsentBasis, ContactKind, FastStage, Household, Referral, ResourceCategory, StaffRole, SymptomKind } from "@/lib/domain/types";
+import { CLINICAL_LEAD_ROLES } from "@/lib/domain/types";
+import { ALL_SCOPES, buildConsent, buildMonthlySummary, CADENCE_DAYS, computeSignals, determineTier, hasActiveConsent, phq2Total, primaryCaregiver, supersedeConsents, zbi12Total } from "@/lib/engine";
 import { getBlueButtonAdapter } from "@/lib/integrations/bluebutton";
 import { getDirectoryAdapter } from "@/lib/integrations/directory";
 import { getEhrAdapter } from "@/lib/integrations/fhir";
@@ -29,13 +31,37 @@ function revalidateAll(householdId?: string) {
   if (householdId) revalidatePath(`/clinic/households/${householdId}`, "layout");
 }
 
-async function requireCaregiver(): Promise<{ h: Household; c: Caregiver; asOf: string }> {
+async function requireCaregiver(): Promise<{ h: Household; c: Caregiver; asOf: string; accountId?: string }> {
   const s = await getCaregiverSession();
   if (!s) redirect("/care");
+  if (!s.householdId || !s.caregiverId) redirect("/care/start");
   const h = await repo().household(s.householdId);
   const c = h?.caregivers.find((x) => x.id === s.caregiverId);
   if (!h || !c) redirect("/care");
-  return { h, c, asOf: await repo().asOf() };
+  return { h, c, asOf: await repo().asOf(), accountId: s.accountId };
+}
+
+async function requireAccount(): Promise<{ a: CaregiverAccount; asOf: string }> {
+  const s = await getCaregiverSession();
+  if (!s?.accountId) redirect("/care");
+  const a = await repo().account(s.accountId);
+  if (!a) redirect("/care");
+  return { a, asOf: await repo().asOf() };
+}
+
+/** Record access requires identity, proxy and a live consent; actions that write to the record check it too. */
+function recordOpen(h: Household, c: Caregiver, asOf: string): boolean {
+  return c.identity.status === "verified" && c.identity.assurance === "IAL2" && (c.proxy.status === "confirmed" || c.proxy.status === "self_attested") && hasActiveConsent(h, c.id, asOf);
+}
+
+/** Request fingerprint for the consent audit trail: truncated IP and user-agent family only. */
+async function attestedFrom(): Promise<string> {
+  const hd = await headers();
+  const ip = (hd.get("x-forwarded-for") ?? "").split(",")[0].trim();
+  const ipShort = ip.includes(".") ? ip.split(".").slice(0, 3).join(".") + ".x" : ip ? ip.split(":").slice(0, 3).join(":") + ":…" : "ip-unknown";
+  const ua = hd.get("user-agent") ?? "";
+  const fam = /iPhone|iPad/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "other";
+  return `${ipShort} ${fam}`;
 }
 
 async function requireStaff(): Promise<string> {
@@ -76,27 +102,211 @@ export async function signOutCaregiver() {
 // ---------------- Caregiver: identity and proxy ----------------
 
 export async function startVerification(fd: FormData) {
-  const { h, c } = await requireCaregiver();
+  const s = await getCaregiverSession();
+  if (!s) redirect("/care");
   const providerId = str(fd, "provider") === "clear" ? "clear" : "idme";
+  const asAccount = !!s.accountId && !s.householdId;
+  const returnUrl = asAccount ? "/care/start" : "/care/home";
+  const subject = asAccount ? ({ kind: "account", accountId: s.accountId! } as const) : ({ kind: "caregiver", caregiverId: s.caregiverId!, householdId: s.householdId! } as const);
+  const actor = asAccount ? `account:${s.accountId}` : `caregiver:${s.caregiverId}`;
   let provider: ReturnType<typeof getIdentityProvider>;
   let result: Awaited<ReturnType<typeof provider.start>>;
   try {
     provider = getIdentityProvider(providerId);
-    result = await provider.start({ caregiverId: c.id, householdId: h.id, returnUrl: "/care/home" });
+    result = await provider.start({ subject, returnUrl });
   } catch (e) {
     const reason = (e as Error).message;
-    await repo().audit({ actor: `caregiver:${c.id}`, action: "identity.start_failed", householdId: h.id, reference: providerId, detail: reason });
-    redirect(`/care/home?verify=error&reason=${encodeURIComponent(reason)}`);
+    await repo().audit({ actor, action: "identity.start_failed", householdId: s.householdId, reference: providerId, detail: reason });
+    redirect(`${returnUrl}?verify=error&reason=${encodeURIComponent(reason)}`);
   }
   await setFlowSession("proof", result.session);
-  await repo().updateHousehold(h.id, (d) => {
-    const cg = d.caregivers.find((x) => x.id === c.id)!;
-    cg.identity.status = "pending";
-    cg.identity.provider = providerId;
-    cg.identity.attempts += 1;
-  });
-  await repo().audit({ actor: `caregiver:${c.id}`, action: "identity.start", householdId: h.id, reference: `${providerId}:${provider.mode}:${result.state.slice(0, 8)}` });
+  if (subject.kind === "account") {
+    const a = await repo().account(subject.accountId);
+    if (a) {
+      a.identity = { ...a.identity, status: "pending", provider: providerId, attempts: a.identity.attempts + 1 };
+      await repo().upsertAccount(a);
+    }
+  } else {
+    await repo().updateHousehold(subject.householdId, (d) => {
+      const cg = d.caregivers.find((x) => x.id === subject.caregiverId)!;
+      cg.identity.status = "pending";
+      cg.identity.provider = providerId;
+      cg.identity.attempts += 1;
+    });
+  }
+  await repo().audit({ actor, action: "identity.start", householdId: s.householdId, reference: `${providerId}:${provider.mode}:${result.state.slice(0, 8)}` });
   redirect(result.redirectUrl);
+}
+
+// ---------------- Caregiver: self-service registration ----------------
+
+export async function registerCaregiver(fd: FormData) {
+  const asOf = await repo().asOf();
+  const givenName = str(fd, "givenName");
+  const familyName = str(fd, "familyName");
+  const birthDate = str(fd, "birthDate");
+  const localityFips = str(fd, "localityFips");
+  if (!givenName || !familyName || !birthDate || !localityFips) redirect("/care/register?error=missing");
+  const smartphone = str(fd, "smartphone") === "on";
+  const broadband = (str(fd, "broadband") as "ok" | "low" | "none") || "low";
+  const a: CaregiverAccount = {
+    id: newId("acct"),
+    givenName,
+    familyName,
+    birthDate,
+    phone: str(fd, "phone") || "000-000-0000",
+    email: str(fd, "email") || undefined,
+    localityFips,
+    access: { smartphone, broadband, preferredChannel: smartphone ? (broadband === "none" ? "sms" : "app") : "phone" },
+    identity: { status: "not_started", attempts: 0 },
+    registeredOn: asOf,
+    householdIds: [],
+  };
+  await repo().upsertAccount(a);
+  await setCaregiverSession({ accountId: a.id });
+  await repo().audit({ actor: `account:${a.id}`, action: "account.registered", reference: localityFips });
+  revalidateAll();
+  redirect("/care/start");
+}
+
+export async function signInAsAccount(fd: FormData) {
+  const accountId = str(fd, "accountId");
+  const a = await repo().account(accountId);
+  if (!a) redirect("/care");
+  const hid = a.householdIds[0];
+  const h = hid ? await repo().household(hid) : undefined;
+  const cg = h?.caregivers.find((c) => c.accountId === a.id);
+  await setCaregiverSession({ accountId: a.id, householdId: cg ? h!.id : undefined, caregiverId: cg?.id });
+  await repo().audit({ actor: `account:${a.id}`, action: "caregiver.sign_in", householdId: cg ? h!.id : undefined });
+  redirect(cg ? "/care/home" : "/care/start");
+}
+
+function readConsentForm(fd: FormData): { basis: ConsentBasis; typedSignature: string; shareDirectory: boolean; shareEvaluator: boolean; attest: boolean } {
+  const b = str(fd, "basis");
+  return {
+    basis: b === "poa_healthcare" || b === "legal_guardian" ? b : "patient",
+    typedSignature: str(fd, "typedSignature"),
+    shareDirectory: str(fd, "shareDirectory") === "on",
+    shareEvaluator: str(fd, "shareEvaluator") === "on",
+    attest: str(fd, "attest") === "on",
+  };
+}
+
+/**
+ * A verified self-registered caregiver adds the person she cares for. This creates the household at the
+ * clinic site for her county with nothing in it but what she typed, records her signed authorization,
+ * and opens her own view (proxy self_attested). The clinic confirms her as representative later.
+ */
+export async function addPatient(fd: FormData) {
+  const { a, asOf } = await requireAccount();
+  if (a.identity.status !== "verified" || a.identity.assurance !== "IAL2") redirect("/care/start?error=verify_first");
+  const form = readConsentForm(fd);
+  const givenName = str(fd, "givenName");
+  const familyName = str(fd, "familyName");
+  const birthDate = str(fd, "birthDate");
+  if (!givenName || !familyName || !birthDate) redirect("/care/add-patient?error=missing");
+  if (!form.attest || form.typedSignature.length < 3) redirect("/care/add-patient?error=signature");
+  const sites = await repo().sites();
+  const localityFips = str(fd, "localityFips") || a.localityFips;
+  const site = sites.find((x) => x.localityFips === localityFips) ?? sites.find((x) => x.localityFips === a.localityFips) ?? sites[0];
+  const hid = newId("hh");
+  const cgId = newId("cg");
+  const lives = str(fd, "livesWith") === "on";
+  const consent = buildConsent({ id: newId("cons"), caregiverId: cgId, basis: form.basis, typedSignature: form.typedSignature, signedAt: new Date().toISOString(), asOf, shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() });
+  const h: Household = {
+    id: hid,
+    siteId: site.id,
+    origin: "self_registered",
+    patient: {
+      id: newId("pt"),
+      givenName,
+      familyName,
+      birthDate,
+      sex: (str(fd, "sex") as "F" | "M") || "F",
+      mbi: "SYNTHETIC",
+      coverage: { partA: true, partB: true, partC: false, partD: true, medicaid: str(fd, "medicaid") === "on" },
+      residence: lives ? "family_home" : "own_home",
+      localityFips,
+      diagnoses: str(fd, "hasDiagnosis") === "on" ? [{ code: "F03.90", display: "Dementia (type to be confirmed by the clinic)" }] : [],
+    },
+    caregivers: [
+      {
+        id: cgId,
+        accountId: a.id,
+        givenName: a.givenName,
+        familyName: a.familyName,
+        birthDate: a.birthDate,
+        relationship: (str(fd, "relationship") as Caregiver["relationship"]) || "daughter",
+        livesWithPatient: lives,
+        localityFips: a.localityFips,
+        phone: a.phone,
+        email: a.email,
+        access: a.access,
+        isPrimary: true,
+        identity: a.identity,
+        proxy: { status: "self_attested", requestedOn: asOf, consentBasis: form.basis, consentRecordedOn: asOf, scope: ALL_SCOPES },
+        health: { phq2: [], bp: [], zbi: [], hasHomeBpCuff: str(fd, "hasBpCuff") === "on" },
+        hoursPerWeek: num(fd, "hoursPerWeek") || (lives ? 40 : 10),
+      },
+    ],
+    consents: [consent],
+    status: "enrolling",
+    enrolledOn: asOf,
+    referralSource: "self",
+    carePlan: { tier: null, contactCadenceDays: 30, goals: [], watchFor: ["Sudden change in confusion", "Fall", "Not drinking or new trouble urinating", "Frightening behavior or trying to leave the house"], whoToCall: [{ label: `${site.orgName} (daytime)`, phone: site.phone }, { label: "Emergency", phone: "911" }] },
+    medications: [],
+    medicareFills: [],
+    medicare: { connected: false },
+    symptomLog: [],
+    appointments: [],
+    messages: [],
+    contacts: [],
+    referrals: [],
+    escalations: [],
+    edVisits: [],
+    summaries: [],
+  };
+  await repo().addHousehold(h);
+  a.householdIds.push(hid);
+  await repo().upsertAccount(a);
+  await setCaregiverSession({ accountId: a.id, householdId: hid, caregiverId: cgId });
+  await repo().audit({ actor: `account:${a.id}`, action: "household.self_registered", householdId: hid, reference: site.id });
+  await repo().audit({ actor: `caregiver:${cgId}`, action: "consent.signed", householdId: hid, reference: `${consent.id}:${consent.basis}:v${consent.version}`, detail: consent.attestedFrom });
+  await refreshEscalations(hid);
+  revalidateAll(hid);
+  redirect("/care/home?welcome=1");
+}
+
+/** Sign the authorization again (first time for clinic-enrolled caregivers, or the 90-day re-affirmation). */
+export async function signConsent(fd: FormData) {
+  const { h, c, asOf } = await requireCaregiver();
+  const verified = c.identity.status === "verified" && c.identity.assurance === "IAL2";
+  if (!verified) redirect("/care/home");
+  const form = readConsentForm(fd);
+  if (!form.attest || form.typedSignature.length < 3) redirect("/care/consent?error=signature");
+  const consent = buildConsent({ id: newId("cons"), caregiverId: c.id, basis: form.basis, typedSignature: form.typedSignature, signedAt: new Date().toISOString(), asOf, shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() });
+  await repo().updateHousehold(h.id, (d) => {
+    d.consents = [...supersedeConsents(d.consents ?? [], c.id), consent];
+    const cg = d.caregivers.find((x) => x.id === c.id)!;
+    if (cg.proxy.status === "not_requested" || cg.proxy.status === "revoked") {
+      cg.proxy.status = "requested";
+      cg.proxy.requestedOn = asOf;
+    }
+  });
+  await repo().audit({ actor: `caregiver:${c.id}`, action: "consent.signed", householdId: h.id, reference: `${consent.id}:${consent.basis}:v${consent.version}`, detail: consent.attestedFrom });
+  revalidateAll(h.id);
+  redirect("/care/home?consent=ok");
+}
+
+export async function revokeConsent() {
+  const { h, c } = await requireCaregiver();
+  const now = new Date().toISOString();
+  await repo().updateHousehold(h.id, (d) => {
+    d.consents = (d.consents ?? []).map((x) => (x.caregiverId === c.id && x.status === "active" ? { ...x, status: "revoked", revokedAt: now } : x));
+  });
+  await repo().audit({ actor: `caregiver:${c.id}`, action: "consent.revoked", householdId: h.id });
+  revalidateAll(h.id);
+  redirect("/care/consent");
 }
 
 export async function requestProxy() {
@@ -229,9 +439,9 @@ export async function caregiverTransportRequest(fd: FormData) {
 }
 
 export async function connectMedicare() {
-  const { h, c } = await requireCaregiver();
-  if (c.proxy.status !== "confirmed" || !c.proxy.scope.includes("medicare_records")) return;
-  const adapter = getBlueButtonAdapter(async (id) => (await repo().household(id))?.medicareFills ?? []);
+  const { h, c, asOf } = await requireCaregiver();
+  if (!recordOpen(h, c, asOf) || !c.proxy.scope.includes("medicare_records")) redirect("/care/home");
+  const adapter = getBlueButtonAdapter((id) => repo().household(id), () => repo().asOf());
   const r = await adapter.start({ householdId: h.id, returnUrl: "/care/medications" });
   await setFlowSession("bb", r.session);
   await repo().audit({ actor: `caregiver:${c.id}`, action: "medicare.authorize_start", householdId: h.id, reference: adapter.mode });
@@ -261,10 +471,79 @@ export async function caregiverReferral(fd: FormData) {
 export async function signInAsStaff(fd: FormData) {
   const staffId = str(fd, "staffId");
   const staff = await repo().staff();
-  if (!staff.some((s) => s.id === staffId)) redirect("/clinic/sign-in");
+  const me = staff.find((s) => s.id === staffId);
+  if (!me) redirect("/clinic/sign-in");
   await setStaffSession({ staffId });
   await repo().audit({ actor: `staff:${staffId}`, action: "staff.sign_in" });
-  redirect("/clinic");
+  redirect(me.status === "active" ? "/clinic" : "/clinic/pending");
+}
+
+/** Clinic staff sign in through CLEAR or ID.me. New subjects land as pending until an admin approves them. */
+export async function startStaffVerification(fd: FormData) {
+  const providerId = str(fd, "provider") === "clear" ? "clear" : "idme";
+  const email = str(fd, "email") || undefined;
+  let provider: ReturnType<typeof getIdentityProvider>;
+  let result: Awaited<ReturnType<typeof provider.start>>;
+  try {
+    provider = getIdentityProvider(providerId);
+    result = await provider.start({ subject: { kind: "staff", email }, returnUrl: "/clinic/sign-in" });
+  } catch (e) {
+    const reason = (e as Error).message;
+    await repo().audit({ actor: "staff:unknown", action: "identity.start_failed", reference: providerId, detail: reason });
+    redirect(`/clinic/sign-in?verify=error&reason=${encodeURIComponent(reason)}`);
+  }
+  await setFlowSession("proof", result.session);
+  await repo().audit({ actor: "staff:unknown", action: "identity.start", reference: `${providerId}:${provider.mode}:${result.state.slice(0, 8)}` });
+  redirect(result.redirectUrl);
+}
+
+// ---------------- Admin: staff approvals and clinical lead assignment ----------------
+
+async function requireAdmin(): Promise<string> {
+  const staffId = await requireStaff();
+  const me = (await repo().staff()).find((s) => s.id === staffId);
+  if (!me?.isAdmin || me.status !== "active") redirect("/clinic");
+  return staffId;
+}
+
+export async function approveStaff(fd: FormData) {
+  const adminId = await requireAdmin();
+  const id = str(fd, "staffId");
+  const me = (await repo().staff()).find((s) => s.id === id);
+  if (!me) return;
+  const role = str(fd, "role") as StaffRole;
+  const siteId = str(fd, "siteId");
+  const decision = str(fd, "decision");
+  if (decision === "disable") {
+    me.status = "disabled";
+  } else {
+    if (role) me.role = role;
+    if (siteId) me.siteId = siteId;
+    me.credentials = str(fd, "credentials") || me.credentials;
+    me.isAdmin = str(fd, "isAdmin") === "on";
+    me.status = "active";
+    me.approvedBy = adminId;
+    me.approvedOn = await repo().asOf();
+  }
+  await repo().upsertStaff(me);
+  await repo().audit({ actor: `staff:${adminId}`, action: decision === "disable" ? "staff.disabled" : "staff.approved", reference: `${me.id}:${me.role}:${me.siteId}` });
+  revalidateAll();
+}
+
+export async function assignLead(fd: FormData) {
+  const adminId = await requireAdmin();
+  const householdId = str(fd, "householdId");
+  const leadId = str(fd, "leadStaffId");
+  const asOf = await repo().asOf();
+  const lead = leadId ? (await repo().staff()).find((s) => s.id === leadId) : undefined;
+  if (leadId && (!lead || lead.status !== "active" || !CLINICAL_LEAD_ROLES.includes(lead.role))) return;
+  await repo().updateHousehold(householdId, (d) => {
+    d.assignedLeadStaffId = lead?.id;
+    d.assignedOn = lead ? asOf : undefined;
+    if (lead && d.siteId !== lead.siteId && str(fd, "moveSite") === "on") d.siteId = lead.siteId;
+  });
+  await repo().audit({ actor: `staff:${adminId}`, action: lead ? "household.lead_assigned" : "household.lead_cleared", householdId, reference: lead?.id });
+  revalidateAll(householdId);
 }
 
 export async function signOutStaff() {
@@ -273,8 +552,6 @@ export async function signOutStaff() {
 }
 
 // ---------------- Staff: proxy and identity ----------------
-
-const ALL_SCOPES: ProxyScope[] = ["care_plan", "medications", "appointments", "messages", "medicare_records", "symptom_log"];
 
 export async function confirmProxy(fd: FormData) {
   const staffId = await requireStaff();
@@ -690,6 +967,10 @@ export async function enrollHousehold(fd: FormData) {
           },
         ]
       : [],
+    origin: "clinic_enrolled",
+    consents: [],
+    assignedLeadStaffId: str(fd, "leadStaffId") || undefined,
+    assignedOn: str(fd, "leadStaffId") ? asOf : undefined,
     status: "enrolling",
     enrolledOn: asOf,
     referralSource: (str(fd, "referralSource") as Household["referralSource"]) || "clinic",

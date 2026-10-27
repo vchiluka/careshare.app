@@ -69,6 +69,11 @@ export default async function CareMedications({ searchParams }: PageProps<"/care
           {h.medicare.connected ? (
             <>
               <p className="mt-2 text-ink-2">Connected {fmtDate(h.medicare.connectedOn)}; last checked {fmtDate(h.medicare.lastSyncOn)}. The clinic compares what was filled against this list.</p>
+              {h.medicareImport && (
+                <p className="mt-1 text-sm text-ink-3">
+                  Pulled {h.medicareImport.counts.coverages} coverage records, {h.medicareImport.counts.eobs} claims ({h.medicareImport.counts.pde} pharmacy, {h.medicareImport.counts.eobs - h.medicareImport.counts.pde} medical).
+                </p>
+              )}
               <h3 className="mt-4">Recent fills</h3>
               <ul className="mt-2 text-sm divide-y divide-rule">
                 {[...h.medicareFills].sort((a, b) => b.fillOn.localeCompare(a.fillOn)).slice(0, 8).map((f, i) => (

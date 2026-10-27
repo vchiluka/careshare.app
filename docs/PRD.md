@@ -20,8 +20,10 @@ The target geography is Southside Virginia (Danville, Pittsylvania, Halifax at g
 Implemented, on synthetic data, with every external seam mocked by default and live adapters behind environment switches:
 
 **Caregiver face**
-- Demo sign-in as a seeded caregiver; identity verification via CLEAR or ID.me (mock vendor page or live OIDC sandbox); failure path offers in-person verification at the clinic.
-- Gate: no record content until verified at IAL2 and confirmed as representative by the clinic. Own-health check-ins allowed once verified.
+- Two ways in: a caregiver the clinic enrolled (demo sign-in as a seeded caregiver), or self-service registration (`/care/register` → account → verify → add the person you care for → sign the authorization → connect Medicare). Self-registered households start empty and are filled from the caregiver's answers and the Medicare import; they land unassigned at the clinic site for the patient's locality.
+- Identity verification via CLEAR or ID.me (mock vendor page or live OIDC sandbox); failure path offers in-person verification at the clinic.
+- Gate, three parts in order: verified at IAL2; proxy confirmed by the clinic (or self-attested after self-registration until the clinic confirms); a signed authorization that has not lapsed. The authorization (`/care/consent`) names the basis (patient consent, health care POA, guardianship), is signed by typing the name, records time and a truncated request fingerprint, lasts 90 days, re-prompts from 14 days out, and can be revoked at any time. A lapsed or revoked authorization closes the record but not the caregiver's own check-ins.
+- Guides (`/care/learn`): fourteen short education items by topic, ordered by the patient's FAST stage when the clinic has recorded one; open before the record is.
 - Home: next visit and ride status, things to act on, watch-for list, who to call.
 - Care plan: tier in plain words, cadence, goals by owner, respite arrangement, diagnoses.
 - Medicines: one shared list with source badges; add a medicine; discrepancies the clinic wants to check; connect Medicare (Blue Button 2.0 mock or live) and see fills.
@@ -33,13 +35,14 @@ Implemented, on synthetic data, with every external seam mocked by default and l
 - Printable one-page summary.
 
 **Clinic Console**
-- Demo sign-in by role.
+- Sign-in with CLEAR or ID.me (new staff land pending until an administrator approves them and sets role and site) or the demo role picker.
+- Administration (`/clinic/admin`, admins only): approve or decline pending staff; assign each household a clinical lead (physician, NP/PA or RN); caseload by lead; reassign. The lead shows on the household header and roster; Today counts the signed-in person's own households and the unassigned ones; the roster filters by lead ("Mine", "Unassigned").
 - Today: critical signals to call on, contacts due, access to open.
 - Households roster with locality/status filters, tier, cadence, signal counts.
 - Household detail: overview (escalations with acknowledge/resolve, tier and cadence, household facts), caregiver and access (identity status, text the link, in-person verification attestation, proxy confirmation with consent basis, revoke, caregiver health with PHQ-2 routing, SMS prompts), care plan (goals, respite, staging and tier recompute, EHR link and CarePlan write), medications (reconciliation against claims with adopt/stop/confirm actions, clinic list, Part D fills), symptom log and ED visits, visits (schedule, arrange ride, complete/missed), messages, contacts (log with minutes and documentation stream), referrals (closed loop with report-back), monthly summary and documentation export, evidence (audit).
 - Proxy confirmation queue; escalation queue with rule filter; pilot outcomes by KPO and locality; enroll a household; integrations status; evidence trail.
 
-Out of scope for this build (designed for, not built): Postgres store; real SSO and caregiver login via the CSP; live directory API; ADT feed from the hospital; 837P/claims; evaluator export; Spanish; offline-first PWA (the printable summary and SMS fallback stand in).
+Out of scope for this build (designed for, not built): caregiver login (as opposed to proofing) via the CSP; live directory API; ADT feed from the hospital; 837P/claims; evaluator export; Spanish; offline-first PWA (the printable summary and SMS fallback stand in).
 
 ## 4. Rules the engine implements
 
@@ -60,6 +63,9 @@ Out of scope for this build (designed for, not built): Postgres store; real SSO 
 ## 5. Acceptance tests (behavioral)
 
 - Given a verified caregiver whose proxy is not confirmed, when she opens any record page, then she is returned to Home with the waiting message, and her own check-in still works.
+- Given a confirmed caregiver whose authorization lapsed (signed more than 90 days ago), when she opens any record page, then she is sent to the authorization page; signing again reopens the record; revoking closes it immediately and is audited.
+- Given a self-registered caregiver who is verified, when she adds a patient and signs, then a household exists at the site for that locality with origin self_registered, proxy self_attested, an active consent, no lead, and her record view is open; connecting Medicare seeds diagnoses and unverified medications from claims.
+- Given staff who sign in through CLEAR for the first time, then they can reach only the pending page until an administrator approves them.
 - Given a caregiver who fails remote verification twice, then her status becomes in-person pending and the Console offers the attested in-person path; confirming proxy before verification is refused and audited.
 - Given a fall logged today, then a critical FALL_REPORTED escalation appears on Today and on the household within the same request.
 - Given urinary symptoms and severe confusion logged two days apart, then UTI_SIGNS is raised.
@@ -69,7 +75,7 @@ Out of scope for this build (designed for, not built): Postgres store; real SSO 
 - Given an appointment within 7 days needing a ride, then TRANSPORT_UNARRANGED is raised; arranging the ride resolves it.
 - Given a household in a non-Appendix-A locality, then it is excluded from People Served and every KPO measure.
 
-`src/lib/engine/__tests__/engine.test.ts` covers the engine; the demo script exercises the pages.
+`src/lib/engine/__tests__/` covers the engine and consent; `src/lib/integrations/bluebutton/__tests__/` covers the FHIR mapper; the demo script exercises the pages.
 
 ## 6. Open questions for the clinical advisor and partner clinic
 

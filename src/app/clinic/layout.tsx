@@ -29,9 +29,9 @@ export default async function ClinicLayout({ children }: LayoutProps<"/clinic">)
           </Link>
           <p className="text-xs text-ink-3 mt-1.5">Clinic Console</p>
         </div>
-        {me && (
+        {me && me.status === "active" && (
           <nav className="flex flex-col px-3 gap-0.5" aria-label="Console">
-            {nav.map((n) => (
+            {[...nav, ...(me.isAdmin ? [{ href: "/clinic/admin", label: "Admin: staff & leads" }] : [])].map((n) => (
               <Link key={n.href} href={n.href} className="rounded px-2 py-1.5 text-sm text-ink-2 hover:bg-white hover:text-ink">
                 {n.label}
               </Link>

@@ -16,7 +16,7 @@ export function createMockIdentityProvider(brand: IdentityProviderId): IdentityP
       return {
         redirectUrl: `/mock/identity?state=${state}&brand=${brand}`,
         state,
-        session: { provider: brand, state, caregiverId: input.caregiverId, householdId: input.householdId, returnUrl: input.returnUrl, startedAt: new Date().toISOString() },
+        session: { provider: brand, state, subject: input.subject, returnUrl: input.returnUrl, startedAt: new Date().toISOString() },
       };
     },
     async complete({ params, session }: CompleteProofingInput): Promise<CompleteProofingResult> {
@@ -27,11 +27,11 @@ export function createMockIdentityProvider(brand: IdentityProviderId): IdentityP
         ok: true,
         identity: {
           provider: brand,
-          subject: `${brand}|mock|${session.caregiverId}`,
+          subject: `${brand}|mock|${session.subject.kind === "caregiver" ? session.subject.caregiverId : session.subject.kind === "account" ? session.subject.accountId : `staff-${session.state.slice(0, 6)}`}`,
           assuranceLevel: "IAL2",
           authenticatorLevel: "AAL2",
           verifiedOn: new Date().toISOString().slice(0, 10),
-          attributes: {},
+          attributes: { givenName: "Mock", familyName: "Verified" },
           evidence: "mock: simulated IAL2/AAL2 success",
         },
       };

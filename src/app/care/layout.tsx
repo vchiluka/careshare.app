@@ -15,18 +15,21 @@ const tabs = [
   { href: "/care/messages", label: "Messages" },
   { href: "/care/checkin", label: "My check-in" },
   { href: "/care/resources", label: "Help nearby" },
+  { href: "/care/learn", label: "Guides" },
 ];
 
 export default async function CareLayout({ children }: LayoutProps<"/care">) {
   const s = await getCaregiverSession();
-  const h = s ? await getRepository().household(s.householdId) : undefined;
+  const repo = getRepository();
+  const h = s?.householdId ? await repo.household(s.householdId) : undefined;
   const c = h?.caregivers.find((x) => x.id === s?.caregiverId);
-  const access = caregiverAccess(c);
+  const account = s?.accountId && !c ? await repo.account(s.accountId) : undefined;
+  const access = caregiverAccess(c, h, h ? await repo.asOf() : undefined);
   return (
     <div data-face="care" className="min-h-screen flex flex-col">
       <header className="border-b border-rule bg-paper-2">
         <div className="max-w-4xl mx-auto px-5 py-4 flex items-center justify-between gap-4">
-          <Link href={s ? "/care/home" : "/care"} className="display text-2xl leading-none">
+          <Link href={c ? "/care/home" : account ? "/care/start" : "/care"} className="display text-2xl leading-none">
             CareShare
           </Link>
           {c && h ? (
@@ -34,6 +37,13 @@ export default async function CareLayout({ children }: LayoutProps<"/care">) {
               <span className="text-ink-2">
                 {c.givenName}, caring for <strong>{h.patient.givenName}</strong>
               </span>
+              <form action={signOutCaregiver}>
+                <button className="btn btn-quiet">Sign out</button>
+              </form>
+            </div>
+          ) : account ? (
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-ink-2">{account.givenName}, setting up</span>
               <form action={signOutCaregiver}>
                 <button className="btn btn-quiet">Sign out</button>
               </form>

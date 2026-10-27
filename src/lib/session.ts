@@ -11,8 +11,10 @@ import { cookies } from "next/headers";
 import { signPayload, verifyPayload } from "./integrations/crypto";
 
 export interface CaregiverSession {
-  caregiverId: string;
-  householdId: string;
+  /** Self-registered caregivers carry an account; clinic-enrolled demo caregivers carry only the household pair. */
+  accountId?: string;
+  caregiverId?: string;
+  householdId?: string;
   startedAt: string;
 }
 

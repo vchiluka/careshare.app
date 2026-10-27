@@ -12,6 +12,7 @@
     "seed": "tsx scripts/generate-seed.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "jose": "^6.2.13",
     "next": "^16.4.3",
     "react": "19.3.0",

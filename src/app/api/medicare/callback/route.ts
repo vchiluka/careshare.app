@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getBlueButtonAdapter, type BlueButtonSession } from "@/lib/integrations/bluebutton";
+import { coverageSummary, diagnosesFromImport, fillsFromImport, getBlueButtonAdapter, type BlueButtonSession } from "@/lib/integrations/bluebutton";
 import { takeFlowSession } from "@/lib/session";
 import { getRepository } from "@/lib/store";
+import { applyMedicareImport } from "@/lib/services/medicare-apply";
 
 export const dynamic = "force-dynamic";
 
@@ -11,18 +12,22 @@ export async function GET(req: NextRequest) {
   const base = req.nextUrl.origin;
   const session = await takeFlowSession<BlueButtonSession>("bb");
   if (!session) return NextResponse.redirect(`${base}/care/medications?medicare=error&reason=expired`);
-  const adapter = getBlueButtonAdapter(async (id) => (await repo.household(id))?.medicareFills ?? []);
+  const adapter = getBlueButtonAdapter((id) => repo.household(id), () => repo.asOf());
   const result = await adapter.complete({ params: Object.fromEntries(req.nextUrl.searchParams.entries()), session });
   const asOf = await repo.asOf();
-  if (result.ok) {
-    await repo.updateHousehold(session.householdId, (h) => {
-      h.medicare = { connected: true, connectedOn: h.medicare.connectedOn ?? asOf, lastSyncOn: asOf, mode: adapter.mode, authorizedBy: "representative" };
-      if (adapter.mode === "live") {
-        h.medicareFills = result.fills ?? [];
-        if (result.coverage) h.patient.coverage = { ...h.patient.coverage, partA: result.coverage.partA, partB: result.coverage.partB, partC: result.coverage.partC, partD: result.coverage.partD, medicaid: result.coverage.dualEligible ?? h.patient.coverage.medicaid };
-      }
+  if (result.ok && result.import) {
+    const imp = result.import;
+    await repo.updateHousehold(session.householdId, (h) => applyMedicareImport(h, imp, { asOf, mode: adapter.mode, patientRef: result.patientRef }));
+    const cov = coverageSummary(imp);
+    await repo.audit({
+      actor: "system",
+      action: "medicare.connected",
+      householdId: session.householdId,
+      reference: `${adapter.mode}:${imp.counts.eobs} claims (${imp.counts.pde} pde), ${imp.counts.coverages} coverages`,
+      detail: `A=${cov.partA} B=${cov.partB} C=${cov.partC} D=${cov.partD} dual=${cov.dual}; ${diagnosesFromImport(imp).length} dx codes; ${fillsFromImport(imp).length} fills`,
     });
+  } else {
+    await repo.audit({ actor: "system", action: "medicare.failed", householdId: session.householdId, reference: result.failureReason });
   }
-  await repo.audit({ actor: "system", action: result.ok ? "medicare.connected" : "medicare.failed", householdId: session.householdId, reference: result.ok ? `${adapter.mode}:${result.fills?.length ?? 0} fills` : result.failureReason });
   return NextResponse.redirect(`${base}${session.returnUrl}?medicare=${result.ok ? "ok" : "failed"}`);
 }

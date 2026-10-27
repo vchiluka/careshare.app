@@ -39,6 +39,8 @@ function household(over: Partial<Household> = {}, cg: Partial<Caregiver> = {}): 
   return {
     id: "hh1",
     siteId: "site1",
+    origin: "clinic_enrolled",
+    consents: [],
     patient: {
       id: "p1",
       givenName: "Mabel",

@@ -1,29 +1,18 @@
 /**
- * CMS Blue Button 2.0: the beneficiary's (or their verified representative's) Medicare claims.
+ * CMS Blue Button 2.0: the beneficiary's (or their verified representative's) Medicare data.
  *
- * CareShare uses it for two things a rural clinic cannot otherwise see:
- *   - Part D pharmacy fills (ExplanationOfBenefit, type PDE) for medication reconciliation
- *   - Coverage (Parts A/B/C/D, Medicaid dual status indicators) for the plan's eligibility context
+ * What CareShare pulls, in Blue Button's FHIR R4 shapes (CARIN Blue Button profiles):
+ *   - Patient            demographics (no MBI stored)
+ *   - Coverage           Parts A/B/C/D with CMS extensions (dual eligibility, Part D plan, LIS)
+ *   - ExplanationOfBenefit  all types: PDE (Part D fills), carrier/DME (Part B), inpatient,
+ *                        outpatient, SNF, HHA, hospice
+ * The mapper in fhir.ts reduces them to MedicareImport; reconciliation and the clinic panels read that.
  *
  * OAuth 2.0 authorization code with PKCE; the person consents on Medicare.gov. Sandbox at
  * sandbox.bluebutton.cms.gov with synthetic beneficiaries; production requires CMS approval.
  */
 
-export interface MedicareFill {
-  ndc: string;
-  name: string;
-  strength: string;
-  fillOn: string;
-  daysSupply: number;
-}
-
-export interface MedicareCoverage {
-  partA: boolean;
-  partB: boolean;
-  partC: boolean;
-  partD: boolean;
-  dualEligible?: boolean;
-}
+import type { MedicareImport } from "@/lib/domain/types";
 
 export interface BlueButtonSession {
   state: string;
@@ -41,10 +30,8 @@ export interface BlueButtonStartResult {
 export interface BlueButtonCompleteResult {
   ok: boolean;
   failureReason?: string;
-  patientRef?: string; // Blue Button FHIR Patient id, not the MBI
-  fills?: MedicareFill[];
-  coverage?: MedicareCoverage;
-  pulledOn?: string;
+  patientRef?: string;
+  import?: MedicareImport;
 }
 
 export interface BlueButtonAdapter {

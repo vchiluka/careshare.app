@@ -8,8 +8,10 @@ import { loadRoster } from "@/lib/services/household-view";
 export const dynamic = "force-dynamic";
 
 export default async function ClinicToday() {
-  await requireClinic();
+  const me = await requireClinic();
   const { rows, asOf } = await loadRoster();
+  const mine = rows.filter((r) => r.h.assignedLeadStaffId === me.id);
+  const unassigned = rows.filter((r) => !r.h.assignedLeadStaffId && r.h.status !== "closed");
   const active = rows.filter((r) => r.h.status === "active");
   const critical = rows.flatMap((r) => r.signals.filter((s) => s.severity === "critical").map((s) => ({ r, s })));
   const warnings = rows.flatMap((r) => r.signals.filter((s) => s.severity === "warning")).length;
@@ -34,6 +36,17 @@ export default async function ClinicToday() {
         <Stat label="to work this week" value={warnings} tone={warnings ? "amber" : undefined} sub="warnings" />
         <Stat label="awaiting your confirmation" value={proxyQueue} tone={proxyQueue ? "amber" : undefined} sub="verified caregivers, proxy not confirmed" />
         <Stat label="caregivers verified" value={`${verified}/${allCg}`} sub={inPerson ? `${inPerson} need in-person verification` : "identity at IAL2"} />
+      </div>
+      <div className="mt-4 text-sm text-ink-2 flex flex-wrap gap-x-6 gap-y-1">
+        <span>
+          <Link href={`/clinic/households?lead=${me.id}`} className="underline">{mine.length} household{mine.length === 1 ? "" : "s"}</Link> with you as clinical lead
+        </span>
+        {unassigned.length > 0 && (
+          <span>
+            <Link href={me.isAdmin ? "/clinic/admin" : "/clinic/households?lead=unassigned"} className="underline">{unassigned.length} without a clinical lead</Link>
+            {me.isAdmin ? ", assign them" : ", ask an admin to assign"}
+          </span>
+        )}
       </div>
 
       <Section title="Call today" aside={<Link href="/clinic/escalations" className="text-sm underline">Full queue</Link>}>

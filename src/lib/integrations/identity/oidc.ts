@@ -221,7 +221,7 @@ export function createOidcIdentityProvider(id: IdentityProviderId): IdentityProv
       return {
         redirectUrl: u.toString(),
         state,
-        session: { provider: id, state, nonce, codeVerifier: verifier, caregiverId: input.caregiverId, householdId: input.householdId, returnUrl: input.returnUrl, startedAt: new Date().toISOString() },
+        session: { provider: id, state, nonce, codeVerifier: verifier, subject: input.subject, returnUrl: input.returnUrl, startedAt: new Date().toISOString() },
       };
     },
     async complete({ params, session }: CompleteProofingInput): Promise<CompleteProofingResult> {

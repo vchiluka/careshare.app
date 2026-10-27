@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { requestProxy, startVerification } from "@/app/actions";
+import { connectMedicare, requestProxy } from "@/app/actions";
+import { VerifyBlock } from "@/components/care-forms";
 import { Notice, Pill, SignalList } from "@/components/ui";
 import { fmtDate, labelPurpose } from "@/lib/engine";
-import { describeIdentityProviders } from "@/lib/integrations/identity";
 import { requireCare } from "@/lib/services/care-context";
 
 export const dynamic = "force-dynamic";
@@ -13,14 +13,14 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
   const sp = await searchParams;
   const { view, me, access } = await requireCare();
   const { h, asOf, signals, site } = view;
-  const verifyMsg = sp.verify === "ok" ? "You are verified. Thank you." : sp.verify === "failed" ? `Verification did not go through: ${String(sp.reason ?? "")}` : sp.verify === "error" ? (sp.reason ? `Verification could not start: ${String(sp.reason)}` : "The verification link expired. Please start again.") : null;
+  const verifyMsg = sp.verify === "ok" ? "You are verified. Thank you." : sp.verify === "failed" ? `Verification did not go through: ${String(sp.reason ?? "")}` : sp.verify === "error" ? (sp.reason ? `Verification could not start: ${String(sp.reason)}` : "The verification link expired. Please start again.") : sp.consent === "ok" ? "Your authorization is signed. Thank you." : sp.welcome ? `${h.patient.givenName}'s record is open. Connecting Medicare is the fastest way to fill it in.` : null;
 
   if (!access.record) {
     return (
       <div className="max-w-2xl">
-        {verifyMsg && <Notice kind={sp.verify === "ok" ? "green" : "amber"}>{verifyMsg}</Notice>}
+        {verifyMsg && <Notice kind={sp.verify === "ok" || sp.consent === "ok" ? "green" : "amber"}>{verifyMsg}</Notice>}
         <h1 className="mt-4">Hello, {me.givenName}.</h1>
-        {me.identity.status !== "verified" ? <VerifyBlock status={me.identity.status} reason={me.identity.failureReason} sitePhone={site.phone} /> : <WaitingBlock status={me.proxy.status} patient={h.patient.givenName} sitePhone={site.phone} />}
+        {me.identity.status !== "verified" ? <VerifyBlock status={me.identity.status} reason={me.identity.failureReason} sitePhone={site.phone} /> : access.needsConsent ? <ConsentBlock reason={access.reason} patient={h.patient.givenName} /> : <WaitingBlock status={me.proxy.status} patient={h.patient.givenName} sitePhone={site.phone} />}
         {access.ownHealth && (
           <div className="card mt-6">
             <h2>While you wait: your own check-in</h2>
@@ -39,12 +39,18 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
   return (
     <div>
       {verifyMsg && <Notice kind="green">{verifyMsg}</Notice>}
+      {access.consent.state === "expiring" && (
+        <Notice kind="amber">
+          Your authorization lapses in {access.consent.daysLeft} day{access.consent.daysLeft === 1 ? "" : "s"}. <Link href="/care/consent" className="underline font-semibold">Re-affirm it now</Link> so the record stays open.
+        </Notice>
+      )}
       <h1 className="mt-2">
         {h.patient.givenName}&rsquo;s care, {fmtDate(asOf)}
       </h1>
       <p className="mt-2 text-ink-2">
-        You are confirmed as {h.patient.givenName}&rsquo;s representative with {site.orgName}. Everything below is shared with the care team there.
+        {me.proxy.status === "confirmed" ? `You are confirmed as ${h.patient.givenName}’s representative with ${site.orgName}.` : `You added ${h.patient.givenName} and signed the authorization; ${site.orgName} will confirm you as representative at your first contact.`} Everything below is shared with the care team there.
       </p>
+      {h.origin === "self_registered" && <GettingStarted h={h} />}
 
       <div className="grid md:grid-cols-2 gap-5 mt-8">
         <div className="card">
@@ -93,6 +99,16 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
           <p className="text-ink-2 mt-1">Respite hours, adult day, rides and meals listed for {view.locality.name}.</p>
         </Link>
       </div>
+      <div className="grid md:grid-cols-2 gap-5 mt-5">
+        <Link href="/care/learn" className="card hover:bg-paper-2">
+          <h3>Guides</h3>
+          <p className="text-ink-2 mt-1">Short guides on sundowning, bathing, wandering, medicines, Medicare, and your own strain, ordered for {h.patient.givenName}&rsquo;s stage.</p>
+        </Link>
+        <Link href="/care/consent" className="card hover:bg-paper-2">
+          <h3>Your authorization</h3>
+          <p className="text-ink-2 mt-1">{access.consent.daysLeft !== undefined ? `Valid for ${access.consent.daysLeft} more days.` : ""} See what you agreed to, re-affirm, or revoke.</p>
+        </Link>
+      </div>
 
       <div className="card-soft mt-8">
         <h2>Watch for, and who to call</h2>
@@ -112,42 +128,6 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
           ))}
         </div>
       </div>
-    </div>
-  );
-}
-
-async function VerifyBlock({ status, reason, sitePhone }: { status: string; reason?: string; sitePhone: string }) {
-  const providers = describeIdentityProviders();
-  return (
-    <div className="mt-4">
-      <p className="text-ink-2">
-        Before you can see anything from the record, we need to know you are who you say you are. This is the same standard Medicare.gov uses for sign-in. It takes about five minutes with your phone and a driver&rsquo;s license or state ID.
-      </p>
-      {(status === "failed" || status === "in_person_pending") && (
-        <Notice kind="amber">
-          <strong>Last attempt did not go through.</strong> {reason} You can try again, or call the clinic at <a className="underline" href={`tel:${sitePhone}`}>{sitePhone}</a> and the enrollment coordinator will verify you in person at your next visit. Either way you end up in the same place.
-        </Notice>
-      )}
-      <div className="grid sm:grid-cols-2 gap-4 mt-6">
-        {providers.map((p) =>
-          p.configError ? (
-            <div key={p.id} className="card opacity-80">
-              <div className="font-bold text-xl">{p.displayName}</div>
-              <p className="text-ink-2 mt-1">Not available right now.</p>
-              <div className="text-xs text-amber mt-3">Configuration incomplete: {p.configError}</div>
-            </div>
-          ) : (
-            <form key={p.id} action={startVerification} className="card">
-              <input type="hidden" name="provider" value={p.id} />
-              <div className="font-bold text-xl">{p.displayName}</div>
-              <p className="text-ink-2 mt-1">{p.id === "clear" ? "Uses your face and your ID. If you already have a CLEAR account, it is the fastest." : "Uses your ID and a selfie, or a video call with an agent if the photos do not work."}</p>
-              <button className="btn btn-primary mt-4 w-full">Verify with {p.displayName}</button>
-              <div className="text-xs text-ink-3 mt-2">{p.mode === "mock" ? "Demo mode: a stand-in page plays the vendor." : "Live sandbox."}</div>
-            </form>
-          ),
-        )}
-      </div>
-      <p className="text-sm text-ink-3 mt-4">We keep only a reference from the verifier and the date. We never see or store pictures of your ID.</p>
     </div>
   );
 }
@@ -174,6 +154,62 @@ function WaitingBlock({ status, patient, sitePhone }: { status: string; patient:
           Taking long? Call <a className="underline" href={`tel:${sitePhone}`}>{sitePhone}</a>.
         </p>
       </div>
+    </div>
+  );
+}
+
+function ConsentBlock({ reason, patient }: { reason: string; patient: string }) {
+  return (
+    <div className="mt-4">
+      <Notice kind="amber">{reason}</Notice>
+      <div className="card mt-4">
+        <h2>Sign the authorization to open {patient}&rsquo;s record</h2>
+        <p className="mt-2 text-ink-2">One page. You choose the basis (their consent, a power of attorney, or a guardianship) and type your name. It lasts 90 days.</p>
+        <Link href="/care/consent" className="btn btn-primary mt-4">
+          Go to the authorization
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/** Checklist shown on a self-registered household until Medicare is connected and the clinic has confirmed. */
+function GettingStarted({ h }: { h: import("@/lib/domain/types").Household }) {
+  const me = h.caregivers[0];
+  const steps: { label: string; done: boolean; body: React.ReactNode }[] = [
+    { label: "Verified and authorization signed", done: true, body: null },
+    {
+      label: "Connect Medicare records",
+      done: h.medicare.connected,
+      body: h.medicare.connected ? (
+        <span className="text-sm text-ink-2">
+          Connected {h.medicare.lastSyncOn ? fmtDate(h.medicare.lastSyncOn) : ""}: {h.medicareImport?.counts.eobs ?? h.medicareFills.length} claims, {h.medicareFills.length} prescription fills. <Link href="/care/medications" className="underline">See medicines</Link>.
+        </span>
+      ) : (
+        <form action={connectMedicare} className="mt-2">
+          <p className="text-sm text-ink-2 mb-2">You will go to Medicare.gov and sign in as {h.patient.givenName} or as their representative. We pull coverage, prescriptions filled, and recent visits.</p>
+          <button className="btn btn-primary">Connect Medicare</button>
+        </form>
+      ),
+    },
+    { label: "Clinic confirms you as representative", done: me.proxy.status === "confirmed", body: me.proxy.status === "confirmed" ? null : <span className="text-sm text-ink-2">Happens at your first contact with the care team. Nothing for you to do; bring the power of attorney if you have one.</span> },
+    { label: "First strain check-in", done: me.health.zbi.length > 0, body: me.health.zbi.length ? null : <Link href="/care/checkin" className="underline text-sm">Twelve questions, three minutes</Link> },
+  ];
+  if (steps.every((s) => s.done)) return null;
+  return (
+    <div className="card-soft mt-6">
+      <h2>Getting started</h2>
+      <ol className="mt-3 space-y-3">
+        {steps.map((s) => (
+          <li key={s.label} className="flex gap-3">
+            <span className={`mt-0.5 h-5 w-5 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${s.done ? "bg-green text-white" : "bg-paper-2 text-ink-3"}`}>{s.done ? "✓" : ""}</span>
+            <div className="min-w-0 flex-1">
+              <div className={s.done ? "text-ink-3 line-through" : "font-semibold"}>{s.label}</div>
+              {!s.done && s.body}
+            </div>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

@@ -13,6 +13,7 @@ import path from "node:path";
 import type {
   Appointment,
   Caregiver,
+  CaregiverAccount,
   CaregiverRelationship,
   ClinicSite,
   CommunityResource,
@@ -27,7 +28,8 @@ import type {
   StaffUser,
   SymptomEntry,
 } from "../src/lib/domain/types";
-import { addDays, buildMonthlySummary, CADENCE_DAYS, computeSignals, determineTier, monthOf } from "../src/lib/engine";
+import { addDays, buildConsent, buildMonthlySummary, CADENCE_DAYS, computeSignals, determineTier, monthOf } from "../src/lib/engine";
+import { EDUCATION } from "../src/lib/content/education";
 
 const AS_OF = process.env.DEMO_AS_OF ?? "2026-10-24";
 
@@ -69,14 +71,24 @@ const sites: ClinicSite[] = [
 const siteForLocality: Record<string, string> = { "51590": "site_danville", "51143": "site_chatham", "51083": "site_southboston", "51089": "site_martinsville", "51690": "site_martinsville", "51117": "site_boydton" };
 
 const staff: StaffUser[] = [
-  { id: "st_pannell", name: "Dr. Carla Pannell", role: "physician", siteId: "site_danville", credentials: "MD, Chief Medical Officer" },
-  { id: "st_whitlow", name: "Jamal Whitlow", role: "np_pa", siteId: "site_chatham", credentials: "FNP-C" },
-  { id: "st_greer", name: "Tasha Greer", role: "rn", siteId: "site_danville", credentials: "RN, care coordinator" },
-  { id: "st_delgado", name: "Rosa Delgado", role: "coordinator", siteId: "site_danville", credentials: "Rural enrollment coordinator" },
-  { id: "st_price", name: "Hannah Price", role: "ot", siteId: "site_danville", credentials: "OTR/L, caregiver training" },
-  { id: "st_bell", name: "Marcus Bell", role: "behavioral_health", siteId: "site_danville", credentials: "LCSW" },
-  { id: "st_oakes", name: "Priya Oakes", role: "ma", siteId: "site_southboston", credentials: "CMA" },
+  { id: "st_pannell", name: "Dr. Carla Pannell", role: "physician", siteId: "site_danville", credentials: "MD, Chief Medical Officer", isAdmin: true, status: "active" },
+  { id: "st_whitlow", name: "Jamal Whitlow", role: "np_pa", siteId: "site_chatham", credentials: "FNP-C", status: "active" },
+  { id: "st_greer", name: "Tasha Greer", role: "rn", siteId: "site_danville", credentials: "RN, care coordinator", status: "active" },
+  { id: "st_nkemelu", name: "Dr. Ada Nkemelu", role: "physician", siteId: "site_southboston", credentials: "DO", status: "active" },
+  { id: "st_delgado", name: "Rosa Delgado", role: "coordinator", siteId: "site_danville", credentials: "Rural enrollment coordinator", status: "active" },
+  { id: "st_price", name: "Hannah Price", role: "ot", siteId: "site_danville", credentials: "OTR/L, caregiver training", status: "active" },
+  { id: "st_bell", name: "Marcus Bell", role: "behavioral_health", siteId: "site_danville", credentials: "LCSW", status: "active" },
+  { id: "st_oakes", name: "Priya Oakes", role: "ma", siteId: "site_southboston", credentials: "CMA", status: "active" },
+  { id: "st_ferrell", name: "Dana Ferrell", role: "ma", siteId: "site_danville", credentials: "RN (pending credential check)", status: "pending", email: "d.ferrell@example.org", identity: { provider: "clear", subject: "clear|sandbox|st_ferrell", assurance: "IAL2", verifiedOn: addDays(AS_OF, -2) } },
 ];
+/** Who may be a clinical lead at each site, in order of preference for the seed. */
+const leadsBySite: Record<string, string[]> = {
+  site_danville: ["st_pannell", "st_greer"],
+  site_chatham: ["st_whitlow", "st_greer"],
+  site_southboston: ["st_nkemelu"],
+  site_martinsville: ["st_whitlow"],
+  site_boydton: ["st_nkemelu"],
+};
 
 // ---------- Names (invented) ----------
 const FEMALE = ["Mabel", "Lorraine", "Bettie", "Odessa", "Geneva", "Pearl", "Wilma", "Thelma", "Inez", "Hazel", "Alberta", "Ruby", "Frances", "Vera", "Lucille", "Nannie", "Clara", "Ethel", "Marjorie", "Doris"];
@@ -476,6 +488,10 @@ function buildHousehold(s: Spec): Household {
     medicareFills: s.medicare ? fills : [],
     medicare: s.medicare ? { connected: true, connectedOn: addDays(enrolledOn, ri(1, 10)), lastSyncOn: addDays(AS_OF, -ri(0, 25)), mode: "mock", authorizedBy: primary && (s.cdr ?? 0) >= 2 ? "representative" : "patient" } : { connected: false },
     medReconciliationCompletedOn: s.status === "active" && s.scenario !== "A" && chance(0.6) ? addDays(AS_OF, -ri(3, 80)) : undefined,
+    origin: "clinic_enrolled",
+    consents: [],
+    assignedLeadStaffId: s.status !== "invited" && (s.scenario !== undefined || chance(0.8)) ? pick(leadsBySite[site]) : undefined,
+    assignedOn: undefined,
     symptomLog: symptoms,
     appointments: appts,
     messages,
@@ -502,6 +518,19 @@ function buildHousehold(s: Spec): Household {
     esc.push({ rule: "CADENCE_OVERDUE", severity: "warning", message: "Contact overdue by 6 days.", action: "Schedule a call.", owner: "clinic", key: `old:${d}`, id: id("esc"), raisedOn: d, status: "resolved", resolvedOn: addDays(d, ri(1, 5)), resolvedBy: "st_greer", resolution: "Called and logged." });
   }
   h.escalations = esc;
+
+  if (h.assignedLeadStaffId) h.assignedOn = addDays(enrolledOn, ri(0, 3));
+
+  // Signed authorizations: every confirmed caregiver signed on the day the clinic confirmed her.
+  // Ninety-day validity means long-enrolled households (Hairston, Adkins) show the expiring and
+  // expired states the app re-prompts on.
+  for (const c of h.caregivers) {
+    if (c.proxy.status !== "confirmed" || !c.proxy.confirmedOn) continue;
+    const signedDay = c.proxy.confirmedOn;
+    const rec = buildConsent({ id: id("cons"), caregiverId: c.id, basis: c.proxy.consentBasis ?? "patient", typedSignature: `${c.givenName} ${c.familyName}`, signedAt: `${signedDay}T${String(ri(9, 16)).padStart(2, "0")}:${String(ri(0, 59)).padStart(2, "0")}:00Z`, asOf: signedDay, shareDirectory: chance(0.7), shareEvaluator: chance(0.8), attestedFrom: "clinic kiosk" });
+    if (rec.expiresOn < AS_OF) rec.status = "expired";
+    h.consents.push(rec);
+  }
 
   // Monthly summaries for completed months since enrollment
   if (h.enrolledOn) {
@@ -531,11 +560,21 @@ const households = specs.map(buildHousehold);
 const stable = ["hh_hairston", "hh_tuck", "hh_simms", "hh_womack", "hh_motley", "hh_adkins"];
 stable.forEach((sid, k) => (households[k].id = sid));
 
-const data: SeedData = { generatedOn: new Date().toISOString().slice(0, 10), asOf: AS_OF, localities, sites, staff, resources, households };
+// Self-registered caregiver accounts: clean slate. They have not verified identity, added a patient, or
+// connected Medicare; the demo walks them through it. No household exists for them yet.
+const accounts: CaregiverAccount[] = [
+  { id: "acct_shaw", givenName: "Regina", familyName: "Shaw", birthDate: "1968-03-14", phone: "434-555-0611", email: "regina.shaw@example.com", localityFips: "51590", access: { smartphone: true, broadband: "ok", preferredChannel: "app" }, identity: { status: "not_started", attempts: 0 }, registeredOn: AS_OF, householdIds: [] },
+  { id: "acct_boone", givenName: "Walter", familyName: "Boone", birthDate: "1957-11-02", phone: "434-555-0622", email: "wboone@example.com", localityFips: "51143", access: { smartphone: true, broadband: "low", preferredChannel: "app" }, identity: { status: "not_started", attempts: 0 }, registeredOn: AS_OF, householdIds: [] },
+  { id: "acct_mays", givenName: "Felicia", familyName: "Mays", birthDate: "1979-07-21", phone: "434-555-0633", email: "felicia.mays@example.com", localityFips: "51083", access: { smartphone: true, broadband: "ok", preferredChannel: "sms" }, identity: { status: "not_started", attempts: 0 }, registeredOn: AS_OF, householdIds: [] },
+  { id: "acct_irby", givenName: "Lamont", familyName: "Irby", birthDate: "1963-01-30", phone: "276-555-0644", localityFips: "51089", access: { smartphone: false, broadband: "none", preferredChannel: "phone" }, identity: { status: "not_started", attempts: 0 }, registeredOn: AS_OF, householdIds: [] },
+];
+
+const data: SeedData = { generatedOn: new Date().toISOString().slice(0, 10), asOf: AS_OF, localities, sites, staff, resources, households, education: EDUCATION, accounts };
 
 const out = path.join(import.meta.dirname, "..", "data", "seed");
 mkdirSync(out, { recursive: true });
 writeFileSync(path.join(out, "seed.json"), JSON.stringify(data, null, 1));
 const active = households.filter((h) => h.status === "active").length;
 const verified = households.flatMap((h) => h.caregivers).filter((c) => c.identity.status === "verified").length;
-console.log(`Seed: ${households.length} households (${active} active), ${verified} verified caregivers, ${resources.length} listings → data/seed/seed.json (as of ${AS_OF})`);
+const consents = households.reduce((n, h) => n + h.consents.length, 0);
+console.log(`Seed: ${households.length} households (${active} active), ${verified} verified caregivers, ${consents} consents, ${accounts.length} self-registered accounts, ${EDUCATION.length} education items, ${resources.length} listings → data/seed/seed.json (as of ${AS_OF})`);

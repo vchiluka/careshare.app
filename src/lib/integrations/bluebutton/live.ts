@@ -4,14 +4,16 @@
  *   BB_CLIENT_ID, BB_CLIENT_SECRET, BB_REDIRECT_URI       required
  *   BB_BASE_URL                                           default https://sandbox.bluebutton.cms.gov
  *   BB_SCOPES                                             default "patient/Patient.read patient/Coverage.read patient/ExplanationOfBenefit.read"
+ *   BB_MAX_PAGES                                          default 20 (EOB pagination, _count=100)
  *
- * Tokens are used once at the callback to pull Part D fills and coverage, then discarded. The
- * memory store has nowhere safe to keep a refresh token; the Postgres driver adds an encrypted
- * token table and a monthly re-pull before the clinic's reconciliation pass.
+ * Tokens are used once at the callback to pull Patient, Coverage and every ExplanationOfBenefit
+ * type, then discarded. Storing the refresh token for a monthly re-pull is a follow-up once the
+ * Postgres store gets an encrypted token table.
  */
 
 import { pkcePair, randomToken } from "../crypto";
-import type { BlueButtonAdapter, BlueButtonCompleteResult, BlueButtonStartResult, MedicareCoverage, MedicareFill } from "./types";
+import { mapBlueButton, resourcesOf, type FhirBundle } from "./fhir";
+import type { BlueButtonAdapter, BlueButtonCompleteResult, BlueButtonStartResult } from "./types";
 
 function cfg() {
   const clientId = process.env.BB_CLIENT_ID;
@@ -25,12 +27,8 @@ function cfg() {
     redirectUri: redirectUri!,
     base: (process.env.BB_BASE_URL ?? "https://sandbox.bluebutton.cms.gov").replace(/\/$/, ""),
     scopes: process.env.BB_SCOPES ?? "patient/Patient.read patient/Coverage.read patient/ExplanationOfBenefit.read",
+    maxPages: Number(process.env.BB_MAX_PAGES ?? 20),
   };
-}
-
-interface FhirBundle {
-  entry?: { resource: Record<string, unknown> }[];
-  link?: { relation: string; url: string }[];
 }
 
 export function createLiveBlueButtonAdapter(): BlueButtonAdapter {
@@ -60,63 +58,28 @@ export function createLiveBlueButtonAdapter(): BlueButtonAdapter {
       const tok = (await tr.json()) as { access_token: string; patient?: string };
       const auth = { authorization: `Bearer ${tok.access_token}`, accept: "application/fhir+json" };
 
-      const patientRef = tok.patient ?? (await (await fetch(`${c.base}/v2/fhir/Patient/`, { headers: auth, cache: "no-store" })).json().then((b: FhirBundle) => (b.entry?.[0]?.resource?.id as string | undefined)));
-
-      const fills: MedicareFill[] = [];
-      let url: string | undefined = `${c.base}/v2/fhir/ExplanationOfBenefit/?type=pde&_count=100${patientRef ? `&patient=${patientRef}` : ""}`;
-      let pages = 0;
-      while (url && pages < 10) {
+      const getJson = async <T,>(url: string): Promise<T | undefined> => {
         const r = await fetch(url, { headers: auth, cache: "no-store" });
-        if (!r.ok) break;
-        const bundle = (await r.json()) as FhirBundle;
-        for (const e of bundle.entry ?? []) fills.push(...fillsFromEob(e.resource));
-        url = bundle.link?.find((l) => l.relation === "next")?.url;
-        pages += 1;
-      }
+        return r.ok ? ((await r.json()) as T) : undefined;
+      };
+      const pages = async (first: string): Promise<Record<string, unknown>[]> => {
+        const out: Record<string, unknown>[] = [];
+        let url: string | undefined = first;
+        for (let i = 0; url && i < c.maxPages; i++) {
+          const b: FhirBundle | undefined = await getJson<FhirBundle>(url);
+          if (!b) break;
+          out.push(...resourcesOf(b));
+          url = b.link?.find((l: { relation?: string; url?: string }) => l.relation === "next")?.url;
+        }
+        return out;
+      };
 
-      let coverage: MedicareCoverage | undefined;
-      try {
-        const cr = await fetch(`${c.base}/v2/fhir/Coverage/?${patientRef ? `beneficiary=${patientRef}` : ""}`, { headers: auth, cache: "no-store" });
-        if (cr.ok) coverage = coverageFromBundle((await cr.json()) as FhirBundle);
-      } catch {
-        /* coverage is optional */
-      }
-
-      return { ok: true, patientRef, fills, coverage, pulledOn: new Date().toISOString().slice(0, 10) };
+      const patientRef = tok.patient ?? (await getJson<FhirBundle>(`${c.base}/v2/fhir/Patient/`).then((b) => (b ? (resourcesOf(b)[0]?.id as string | undefined) : undefined)));
+      const patient = patientRef ? await getJson<Record<string, unknown>>(`${c.base}/v2/fhir/Patient/${patientRef}`) : undefined;
+      const coverages = await pages(`${c.base}/v2/fhir/Coverage/?${patientRef ? `beneficiary=${patientRef}&` : ""}_count=100`);
+      const eobs = await pages(`${c.base}/v2/fhir/ExplanationOfBenefit/?${patientRef ? `patient=${patientRef}&` : ""}_count=100`);
+      const pulledOn = new Date().toISOString().slice(0, 10);
+      return { ok: true, patientRef, import: mapBlueButton({ patient, coverages, eobs, pulledOn, source: "live", baseUrl: c.base }) };
     },
   };
-}
-
-/** Map a Part D event (PDE) ExplanationOfBenefit to fills: NDC, display, service date, days supply. */
-export function fillsFromEob(eob: Record<string, unknown>): MedicareFill[] {
-  const items = (eob.item as Record<string, unknown>[] | undefined) ?? [];
-  const info = (eob.supportingInfo as Record<string, unknown>[] | undefined) ?? [];
-  const daysSupply = Number(
-    info.find((i) => JSON.stringify(i.category ?? {}).toLowerCase().includes("dayssupply"))?.valueQuantity && (info.find((i) => JSON.stringify(i.category ?? {}).toLowerCase().includes("dayssupply"))!.valueQuantity as { value?: number }).value,
-  );
-  const out: MedicareFill[] = [];
-  for (const it of items) {
-    const coding = ((it.productOrService as { coding?: { system?: string; code?: string; display?: string }[] } | undefined)?.coding ?? []).find((cd) => (cd.system ?? "").includes("ndc"));
-    if (!coding?.code) continue;
-    const display = coding.display ?? "Unknown drug";
-    const [name, ...rest] = display.split(/\s+(?=\d)/);
-    out.push({ ndc: coding.code, name: name.toLowerCase(), strength: rest.join(" "), fillOn: String(it.servicedDate ?? (eob.billablePeriod as { start?: string } | undefined)?.start ?? "").slice(0, 10), daysSupply: Number.isFinite(daysSupply) && daysSupply > 0 ? daysSupply : 30 });
-  }
-  return out;
-}
-
-export function coverageFromBundle(b: FhirBundle): MedicareCoverage {
-  const cov: MedicareCoverage = { partA: false, partB: false, partC: false, partD: false };
-  for (const e of b.entry ?? []) {
-    const r = e.resource as { id?: string; status?: string; type?: { coding?: { code?: string }[] }; extension?: { url?: string; valueCoding?: { code?: string } }[] };
-    const id = (r.id ?? "").toLowerCase();
-    const active = r.status === "active";
-    if (id.startsWith("part-a")) cov.partA = active;
-    if (id.startsWith("part-b")) cov.partB = active;
-    if (id.startsWith("part-c")) cov.partC = active;
-    if (id.startsWith("part-d")) cov.partD = active;
-    const dual = r.extension?.find((x) => (x.url ?? "").includes("dual"))?.valueCoding?.code;
-    if (dual && dual !== "00" && dual !== "NA") cov.dualEligible = true;
-  }
-  return cov;
 }

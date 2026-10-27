@@ -62,12 +62,19 @@ export default async function HouseholdPage({ params, searchParams }: PageProps<
             <Pill kind={h.status === "active" ? "green" : "neutral"}>{h.status}</Pill>
             {primary ? <Pill kind={primary.proxy.status === "confirmed" ? "green" : "amber"}>{primary.givenName}: {primary.identity.status === "verified" ? (primary.proxy.status === "confirmed" ? "verified, proxy confirmed" : `verified, proxy ${primary.proxy.status.replaceAll("_", " ")}`) : primary.identity.status.replaceAll("_", " ")}</Pill> : <Pill>No caregiver</Pill>}
             {h.medicare.connected && <Pill kind="blue">Medicare connected</Pill>}
+            {h.origin === "self_registered" && <Pill kind="slate">self-registered</Pill>}
+            {h.assignedLeadStaffId ? <Pill kind="slate">Lead: {view.staffById[h.assignedLeadStaffId]?.name ?? h.assignedLeadStaffId}</Pill> : <Pill kind="amber">No clinical lead{me.isAdmin ? "" : "; ask an admin"}</Pill>}
             {h.patient.ehrPatientId && <Pill kind="slate">EHR linked</Pill>}
           </div>
         </div>
         <div className="text-right text-sm text-ink-3">
           <div>Enrolled {fmtDate(h.enrolledOn)} via {REFERRAL[h.referralSource]}</div>
           <div>Signed in as {me.name}</div>
+          {me.isAdmin && (
+            <Link href={`/clinic/admin?household=${h.id}`} className="underline">
+              Assign clinical lead
+            </Link>
+          )}
         </div>
       </div>
 

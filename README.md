@@ -48,4 +48,4 @@ Every seam is an environment variable; `/clinic/integrations` shows the current 
 
 ## Deploy
 
-Vercel, Node runtime. Set `CARESHARE_SECRET` (required in production) and `DEMO_AS_OF`. The memory store resets with each deployment; that is fine for the demo and is the first thing the Postgres driver replaces.
+Vercel, Node runtime. Set `CARESHARE_SECRET` (required in production) and `DEMO_AS_OF`. Without a database the memory store resets with each deployment. To persist: in the Vercel project, Storage → Create Database → Neon; Vercel injects `DATABASE_URL` and the Postgres driver takes over on the next deploy, creating its tables and loading the seed on first request.
