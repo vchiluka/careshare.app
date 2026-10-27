@@ -21,3 +21,24 @@ export function getIdentityProvider(id: IdentityProviderId): IdentityProvider {
 export function identityProviders(): IdentityProvider[] {
   return (["clear", "idme"] as const).map(getIdentityProvider);
 }
+
+export interface ProviderStatus {
+  id: IdentityProviderId;
+  displayName: string;
+  mode: "mock" | "live";
+  /** Set when the live configuration is incomplete; names variables only, never values. */
+  configError?: string;
+}
+
+/** Never throws: a misconfigured vendor is reported, not fatal, so the page still renders. */
+export function describeIdentityProviders(): ProviderStatus[] {
+  return (["clear", "idme"] as const).map((id) => {
+    const displayName = id === "idme" ? "ID.me" : "CLEAR";
+    try {
+      const p = getIdentityProvider(id);
+      return { id, displayName, mode: p.mode };
+    } catch (e) {
+      return { id, displayName, mode: "live", configError: (e as Error).message };
+    }
+  });
+}

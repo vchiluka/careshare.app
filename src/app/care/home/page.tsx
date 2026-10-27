@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requestProxy, startVerification } from "@/app/actions";
 import { Notice, Pill, SignalList } from "@/components/ui";
 import { fmtDate, labelPurpose } from "@/lib/engine";
-import { identityProviders } from "@/lib/integrations/identity";
+import { describeIdentityProviders } from "@/lib/integrations/identity";
 import { requireCare } from "@/lib/services/care-context";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
   const sp = await searchParams;
   const { view, me, access } = await requireCare();
   const { h, asOf, signals, site } = view;
-  const verifyMsg = sp.verify === "ok" ? "You are verified. Thank you." : sp.verify === "failed" ? `Verification did not go through: ${String(sp.reason ?? "")}` : sp.verify === "error" ? "The verification link expired. Please start again." : null;
+  const verifyMsg = sp.verify === "ok" ? "You are verified. Thank you." : sp.verify === "failed" ? `Verification did not go through: ${String(sp.reason ?? "")}` : sp.verify === "error" ? (sp.reason ? `Verification could not start: ${String(sp.reason)}` : "The verification link expired. Please start again.") : null;
 
   if (!access.record) {
     return (
@@ -117,7 +117,7 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
 }
 
 async function VerifyBlock({ status, reason, sitePhone }: { status: string; reason?: string; sitePhone: string }) {
-  const providers = identityProviders();
+  const providers = describeIdentityProviders();
   return (
     <div className="mt-4">
       <p className="text-ink-2">
@@ -129,15 +129,23 @@ async function VerifyBlock({ status, reason, sitePhone }: { status: string; reas
         </Notice>
       )}
       <div className="grid sm:grid-cols-2 gap-4 mt-6">
-        {providers.map((p) => (
-          <form key={p.id} action={startVerification} className="card">
-            <input type="hidden" name="provider" value={p.id} />
-            <div className="font-bold text-xl">{p.displayName}</div>
-            <p className="text-ink-2 mt-1">{p.id === "clear" ? "Uses your face and your ID. If you already have a CLEAR account, it is the fastest." : "Uses your ID and a selfie, or a video call with an agent if the photos do not work."}</p>
-            <button className="btn btn-primary mt-4 w-full">Verify with {p.displayName}</button>
-            <div className="text-xs text-ink-3 mt-2">{p.mode === "mock" ? "Demo mode: a stand-in page plays the vendor." : "Live sandbox."}</div>
-          </form>
-        ))}
+        {providers.map((p) =>
+          p.configError ? (
+            <div key={p.id} className="card opacity-80">
+              <div className="font-bold text-xl">{p.displayName}</div>
+              <p className="text-ink-2 mt-1">Not available right now.</p>
+              <div className="text-xs text-amber mt-3">Configuration incomplete: {p.configError}</div>
+            </div>
+          ) : (
+            <form key={p.id} action={startVerification} className="card">
+              <input type="hidden" name="provider" value={p.id} />
+              <div className="font-bold text-xl">{p.displayName}</div>
+              <p className="text-ink-2 mt-1">{p.id === "clear" ? "Uses your face and your ID. If you already have a CLEAR account, it is the fastest." : "Uses your ID and a selfie, or a video call with an agent if the photos do not work."}</p>
+              <button className="btn btn-primary mt-4 w-full">Verify with {p.displayName}</button>
+              <div className="text-xs text-ink-3 mt-2">{p.mode === "mock" ? "Demo mode: a stand-in page plays the vendor." : "Live sandbox."}</div>
+            </form>
+          ),
+        )}
       </div>
       <p className="text-sm text-ink-3 mt-4">We keep only a reference from the verifier and the date. We never see or store pictures of your ID.</p>
     </div>

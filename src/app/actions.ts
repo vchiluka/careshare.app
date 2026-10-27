@@ -78,8 +78,16 @@ export async function signOutCaregiver() {
 export async function startVerification(fd: FormData) {
   const { h, c } = await requireCaregiver();
   const providerId = str(fd, "provider") === "clear" ? "clear" : "idme";
-  const provider = getIdentityProvider(providerId);
-  const result = await provider.start({ caregiverId: c.id, householdId: h.id, returnUrl: "/care/home" });
+  let provider: ReturnType<typeof getIdentityProvider>;
+  let result: Awaited<ReturnType<typeof provider.start>>;
+  try {
+    provider = getIdentityProvider(providerId);
+    result = await provider.start({ caregiverId: c.id, householdId: h.id, returnUrl: "/care/home" });
+  } catch (e) {
+    const reason = (e as Error).message;
+    await repo().audit({ actor: `caregiver:${c.id}`, action: "identity.start_failed", householdId: h.id, reference: providerId, detail: reason });
+    redirect(`/care/home?verify=error&reason=${encodeURIComponent(reason)}`);
+  }
   await setFlowSession("proof", result.session);
   await repo().updateHousehold(h.id, (d) => {
     const cg = d.caregivers.find((x) => x.id === c.id)!;

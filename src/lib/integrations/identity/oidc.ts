@@ -61,7 +61,26 @@ const CLEAR_DEFAULT_ENDPOINTS = {
   authorization_endpoint: "https://verified.clearme.com/integrations/oauth2/auth",
   token_endpoint: "https://verified.clearme.com/integrations/oauth2/token",
   jwks_uri: "https://verified.clearme.com/integrations/.well-known/jwks.json",
+  userinfo_endpoint: undefined as string | undefined,
 };
+
+/**
+ * ID.me endpoints (docs.id.me): issuer https://api.idmelabs.com/oidc (sandbox) or https://api.id.me/oidc,
+ * authorize /oauth/authorize, token /oauth/token, JWKS /oidc/.well-known/jwks, userinfo
+ * /api/public/v3/userinfo. Derived from the issuer's host so a single IDME_ISSUER switches environments
+ * and no discovery fetch is needed.
+ */
+function idmeDefaults(issuerEnv: string | undefined) {
+  const issuer = (issuerEnv ?? "https://api.idmelabs.com/oidc").replace(/\/$/, "");
+  const origin = new URL(issuer).origin;
+  return {
+    issuer,
+    authorization_endpoint: `${origin}/oauth/authorize`,
+    token_endpoint: `${origin}/oauth/token`,
+    jwks_uri: `${origin}/oidc/.well-known/jwks`,
+    userinfo_endpoint: `${origin}/api/public/v3/userinfo` as string | undefined,
+  };
+}
 
 export function readOidcConfig(id: IdentityProviderId): OidcConfig {
   const P = id.toUpperCase();
@@ -71,11 +90,12 @@ export function readOidcConfig(id: IdentityProviderId): OidcConfig {
   const redirectUri = env("REDIRECT_URI");
   const missing = [!clientId && `${P}_CLIENT_ID`, !clientSecret && `${P}_CLIENT_SECRET`, !redirectUri && `${P}_REDIRECT_URI`].filter(Boolean);
   if (missing.length) throw new Error(`Live ${id} identity provider selected but ${missing.join(", ")} not set. See .env.example.`);
-  const clearDefaults = id === "clear" ? CLEAR_DEFAULT_ENDPOINTS : undefined;
-  const issuer = env("ISSUER") ?? clearDefaults?.issuer;
-  const authorizationEndpoint = env("AUTHORIZATION_ENDPOINT") ?? clearDefaults?.authorization_endpoint;
-  const tokenEndpoint = env("TOKEN_ENDPOINT") ?? clearDefaults?.token_endpoint;
-  const jwksUri = env("JWKS_URI") ?? clearDefaults?.jwks_uri;
+  const defaults = id === "clear" ? CLEAR_DEFAULT_ENDPOINTS : idmeDefaults(env("ISSUER"));
+  const issuer = env("ISSUER") ?? defaults.issuer;
+  const authorizationEndpoint = env("AUTHORIZATION_ENDPOINT") ?? defaults.authorization_endpoint;
+  const tokenEndpoint = env("TOKEN_ENDPOINT") ?? defaults.token_endpoint;
+  const jwksUri = env("JWKS_URI") ?? defaults.jwks_uri;
+  const userinfoEndpoint = env("USERINFO_ENDPOINT") ?? defaults.userinfo_endpoint;
   if (!issuer && !(authorizationEndpoint && tokenEndpoint && jwksUri)) {
     throw new Error(`Set ${P}_ISSUER (for discovery) or ${P}_AUTHORIZATION_ENDPOINT, ${P}_TOKEN_ENDPOINT and ${P}_JWKS_URI.`);
   }
@@ -87,7 +107,7 @@ export function readOidcConfig(id: IdentityProviderId): OidcConfig {
     authorizationEndpoint,
     tokenEndpoint,
     jwksUri,
-    userinfoEndpoint: env("USERINFO_ENDPOINT"),
+    userinfoEndpoint,
     scopes: env("SCOPES") ?? DEFAULT_SCOPES[id],
     acrValues: env("ACR_VALUES"),
     tokenAuth: (env("TOKEN_AUTH") as OidcConfig["tokenAuth"]) ?? "client_secret_post",
