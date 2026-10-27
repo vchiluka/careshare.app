@@ -74,6 +74,10 @@ Mock writes to an in-memory outbox shown on `/clinic/integrations`. Twilio adapt
 
 ## 6. Persistent store
 
+Vercel runs the app on many short-lived instances, so the memory driver cannot carry a record created on one request (a provisional account at registration) to the next (the CLEAR callback). Two persistent drivers exist; selection is automatic from what Vercel injects, `STORE_DRIVER` overrides.
+
+`store/blob.ts` (current production) keeps each mutable collection as one private JSON blob in Vercel Blob (`careshare/v1/{households,staff,accounts,audit}.json`), created and seeded on first read. Reads bypass the CDN cache; a two-second in-process cache absorbs the several repository calls one render makes and every write clears it. Writes are read-modify-write of the whole collection, acceptable for a one-clinic pilot demo and the first thing Postgres replaces. Env: `BLOB_READ_WRITE_TOKEN` (injected when the Blob store is connected to the project).
+
 `store/postgres.ts` runs on Neon serverless Postgres (`@neondatabase/serverless`, HTTP driver, no pool to manage on Vercel). Three tables: `cs_documents(kind, id, data jsonb)` for households, staff and caregiver accounts; `cs_audit` append-only; `cs_meta`. Reference data (localities, sites, resources, education) comes from the seed file. On first request with an empty database the driver creates the tables and loads the seed; `Reset demo data` wipes and reseeds. Selection is automatic: `DATABASE_URL` set → postgres, else memory; `STORE_DRIVER` overrides. Create the database from the Vercel project (Storage → Create Database → Neon); Vercel injects `DATABASE_URL`. Encrypted token storage for Blue Button refresh tokens is the next addition.
 
 ## 7. Staff sign-in through a CSP

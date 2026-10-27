@@ -4,11 +4,12 @@ import type { AuditEntry, CaregiverAccount, ClinicSite, CommunityResource, Educa
  * Repository: the only way pages and actions touch data.
  *
  * STORE_DRIVER=memory (default) loads the synthetic seed into process memory and keeps edits there
- * until the process restarts. STORE_DRIVER=postgres (or any DATABASE_URL) uses a JSONB document
- * store in Postgres (Neon) seeded on first run; see postgres.ts.
+ * until the process restarts. STORE_DRIVER=blob (or a BLOB_READ_WRITE_TOKEN) keeps each collection as a
+ * private JSON blob in Vercel Blob; STORE_DRIVER=postgres (or any DATABASE_URL) uses a JSONB document
+ * store in Postgres (Neon). Both seed themselves on first run.
  */
 export interface Repository {
-  readonly driver: "memory" | "postgres";
+  readonly driver: "memory" | "blob" | "postgres";
   /** The demo clock (DEMO_AS_OF) or today. */
   asOf(): Promise<string>;
   localities(): Promise<Locality[]>;

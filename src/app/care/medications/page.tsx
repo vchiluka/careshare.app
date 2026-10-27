@@ -17,7 +17,7 @@ export default async function CareMedications({ searchParams }: PageProps<"/care
       <h1>{h.patient.givenName}&rsquo;s medicines</h1>
       <p className="mt-2 text-ink-2">One list, shared with the clinic. If a pharmacy or another doctor changes something, add it here and the clinic will confirm it at the next contact.</p>
       {sp.medicare === "ok" && <div className="mt-4"><Notice kind="green">Medicare records connected. Pharmacy fills now show next to the list.</Notice></div>}
-      {sp.medicare === "failed" && <div className="mt-4"><Notice kind="amber">Medicare authorization did not complete. You can try again any time.</Notice></div>}
+      {(sp.medicare === "failed" || sp.medicare === "error") && <div className="mt-4"><Notice kind="amber">{sp.medicare === "error" ? "The Medicare connection could not start" : "Medicare authorization did not complete"}{sp.reason ? `: ${String(sp.reason)}` : ""}. You can try again any time.</Notice></div>}
 
       {mine.length > 0 && (
         <div className="card mt-6 border-amber">

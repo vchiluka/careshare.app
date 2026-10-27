@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { connectMedicare } from "@/app/actions";
 import { Notice, Pill } from "@/components/ui";
-import { blueButtonMode } from "@/lib/integrations/bluebutton";
+import { describeBlueButton } from "@/lib/integrations/bluebutton";
 import { requireCare } from "@/lib/services/care-context";
 
 export const dynamic = "force-dynamic";
@@ -11,9 +11,10 @@ export default async function Connect({ searchParams }: PageProps<"/care/connect
   const sp = await searchParams;
   const { view, me } = await requireCare({ needRecord: true });
   const { h } = view;
-  const mode = blueButtonMode();
-  const canConnect = me.proxy.scope.includes("medicare_records");
-  const denied = sp.medicare === "denied" || sp.medicare === "failed";
+  const bb = describeBlueButton();
+  const mode = bb.mode;
+  const canConnect = me.proxy.scope.includes("medicare_records") && !bb.configError;
+  const denied = sp.medicare === "denied" || sp.medicare === "failed" || sp.medicare === "error";
   return (
     <div className="max-w-xl">
       <ol className="flex flex-wrap gap-2 text-xs">
@@ -26,7 +27,8 @@ export default async function Connect({ searchParams }: PageProps<"/care/connect
         ))}
       </ol>
       {sp.signed && <Notice kind="green">Signed. {h.patient.givenName}&rsquo;s record is open to you.</Notice>}
-      {denied && <Notice kind="amber">Medicare.gov did not complete the authorization{sp.reason ? `: ${String(sp.reason)}` : ""}. You can try again or skip for now.</Notice>}
+      {denied && <Notice kind="amber">{sp.medicare === "error" ? "The Medicare connection could not start" : "Medicare.gov did not complete the authorization"}{sp.reason ? `: ${String(sp.reason)}` : ""}. You can try again or skip for now.</Notice>}
+      {bb.configError && <Notice kind="amber">Medicare connection is not available right now. Configuration incomplete: {bb.configError}</Notice>}
       <h1 className="mt-4">Connect {h.patient.givenName}&rsquo;s Medicare records</h1>
       <p className="mt-2 text-ink-2">
         You will be sent to Medicare.gov to sign in as {h.patient.givenName} or as their representative and allow CareShare to read their records. Then you come straight back here. We pull three things: what Medicare covers (Parts A, B, D and Medicaid status), every prescription filled under Part D, and recent doctor, hospital and emergency visits. The clinic starts with facts instead of a blank chart.

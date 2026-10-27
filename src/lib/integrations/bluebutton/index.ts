@@ -66,6 +66,17 @@ export function blueButtonMode(): "mock" | "live" {
   return v;
 }
 
+/** Never throws: reports mode and any missing configuration so pages can render a notice instead of crashing. */
+export function describeBlueButton(): { mode: "mock" | "live"; configError?: string } {
+  try {
+    const mode = blueButtonMode();
+    if (mode === "live") createLiveBlueButtonAdapter();
+    return { mode };
+  } catch (e) {
+    return { mode: "live", configError: (e as Error).message };
+  }
+}
+
 export function getBlueButtonAdapter(getHousehold: (id: string) => Promise<Household | undefined>, asOf: () => Promise<string>): BlueButtonAdapter {
   return blueButtonMode() === "live" ? createLiveBlueButtonAdapter() : createMockBlueButtonAdapter(getHousehold, asOf);
 }

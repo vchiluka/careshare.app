@@ -472,8 +472,17 @@ export async function caregiverTransportRequest(fd: FormData) {
 export async function connectMedicare() {
   const { h, c, asOf } = await requireCaregiver();
   if (!recordOpen(h, c, asOf) || !c.proxy.scope.includes("medicare_records")) redirect("/care/home");
-  const adapter = getBlueButtonAdapter((id) => repo().household(id), () => repo().asOf());
-  const r = await adapter.start({ householdId: h.id, returnUrl: h.origin === "self_registered" && !h.medicare.connected ? "/care/connect" : "/care/medications" });
+  const back = h.origin === "self_registered" && !h.medicare.connected ? "/care/connect" : "/care/medications";
+  let adapter: ReturnType<typeof getBlueButtonAdapter>;
+  let r: Awaited<ReturnType<typeof adapter.start>>;
+  try {
+    adapter = getBlueButtonAdapter((id) => repo().household(id), () => repo().asOf());
+    r = await adapter.start({ householdId: h.id, returnUrl: back });
+  } catch (e) {
+    const reason = (e as Error).message;
+    await repo().audit({ actor: `caregiver:${c.id}`, action: "medicare.authorize_start_failed", householdId: h.id, detail: reason });
+    redirect(`${back}?medicare=error&reason=${encodeURIComponent(reason)}`);
+  }
   await setFlowSession("bb", r.session);
   await repo().audit({ actor: `caregiver:${c.id}`, action: "medicare.authorize_start", householdId: h.id, reference: adapter.mode });
   redirect(r.redirectUrl);

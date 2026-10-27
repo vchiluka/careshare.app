@@ -30,7 +30,7 @@ A Next.js 16 app with two faces over one household record: CareShare Caregiver (
 - **A new rule:** pure function in `engine/`, doc comment with the clinical source, test in `__tests__`, surface through `computeSignals` or `outcomeReport`; only then a page.
 - **A new page:** server component, `force-dynamic`, read through `src/lib/services`, mutate through `src/app/actions.ts` (audit entry required). Use `ui.tsx` components; no component library.
 - **A live adapter:** implement the interface in `<vendor>.ts`, read config from env, register in the `get*()` switch, document variables in `.env.example`, `docs/INTEGRATIONS.md`, and `/clinic/integrations`. Keep the mock working.
-- **The store:** `src/lib/store/postgres.ts` (Neon, JSONB documents) is used when `DATABASE_URL` is set; memory stays the default for `npm run dev`. Any new document kind goes through `Repository` so both drivers stay equivalent.
+- **The store:** three drivers behind `Repository`: memory (default for `npm run dev`), `blob.ts` (Vercel Blob, used when `BLOB_READ_WRITE_TOKEN` is set; production today), `postgres.ts` (Neon, used when `DATABASE_URL` is set; takes precedence). Any new document kind goes through `Repository` so all three stay equivalent; `__tests__/blob.test.ts` exercises the blob driver with a mocked SDK.
 - **Education content:** `src/lib/content/education.ts`, paraphrased from public-domain guidance with the source named; no verbatim copying.
 
 ## Commands
