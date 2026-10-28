@@ -31,7 +31,7 @@ export default async function Circle({ searchParams }: PageProps<"/care/circle">
                 </div>
                 <div className="text-xs text-ink-3">{c.relationship.replaceAll("_", " ")}{c.isPrimary ? " · primary" : ""}</div>
               </div>
-              <div className="flex gap-1.5">
+              <div className="pills">
                 <Pill kind={c.identity.status === "verified" ? "green" : "neutral"}>{c.identity.status === "verified" ? "identity verified" : c.identity.status.replaceAll("_", " ")}</Pill>
                 <Pill kind={c.proxy.status === "confirmed" ? "green" : c.proxy.status === "self_attested" ? "blue" : "amber"}>{c.proxy.status === "confirmed" ? "clinic confirmed" : c.proxy.status.replaceAll("_", " ")}</Pill>
                 <Pill kind={cs.state === "active" || cs.state === "expiring" ? "green" : "neutral"}>authorization {cs.state}</Pill>

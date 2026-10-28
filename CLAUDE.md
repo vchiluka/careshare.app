@@ -24,6 +24,7 @@ A Next.js 16 app with two faces over one household record: CareShare Caregiver (
 - `cacheComponents` off; pages that read the store export `dynamic = "force-dynamic"`.
 - Fonts via `<link>` in the root layout (Atkinson Hyperlegible for body because it is built for low-vision readers; Fraunces for headings). Not `next/font`, which fetches at build and fails offline.
 - The two faces share tokens in `globals.css`; `data-face="care"` (larger type, clay accent) and `data-face="clinic"` (denser, slate accent) are set on the face layouts.
+- The caregiver face is phone-first: below 768px the top tabs hide, a fixed bottom bar (Home, Medicines, Log, Visits, More) takes over, scored-instrument tiles become one row per answer, primary buttons go full width, tables scroll inside their card. Custom CSS in `globals.css` is unlayered and therefore beats Tailwind utilities (`hidden`, `md:flex`): put responsive overrides for custom classes in the `@media` blocks there, not in utility classes. `src/proxy.ts` sets `x-pathname` so layouts can mark the current section without client JavaScript. `/manifest.webmanifest` and `icon.svg` make it installable to a phone home screen.
 
 ## How to add things
 

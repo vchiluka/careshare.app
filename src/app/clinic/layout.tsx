@@ -21,16 +21,21 @@ export default async function ClinicLayout({ children }: LayoutProps<"/clinic">)
   const [s, asOf, staff] = await Promise.all([getStaffSession(), repo.asOf(), repo.staff()]);
   const me = staff.find((x) => x.id === s?.staffId);
   return (
-    <div data-face="clinic" className="min-h-screen flex">
-      <aside className="w-60 shrink-0 border-r border-rule bg-paper-2 flex flex-col no-print">
-        <div className="px-5 pt-6 pb-4">
+    <div data-face="clinic" className="min-h-screen flex flex-col md:flex-row">
+      <aside className="md:w-60 shrink-0 border-b md:border-b-0 md:border-r border-rule bg-paper-2 flex flex-col no-print">
+        <div className="px-5 pt-4 md:pt-6 pb-3 md:pb-4 flex items-baseline justify-between md:block">
           <Link href="/clinic" className="display text-2xl leading-none">
             CareShare
           </Link>
-          <p className="text-xs text-ink-3 mt-1.5">Clinic Console</p>
+          <p className="text-xs text-ink-3 md:mt-1.5">Clinic Console</p>
+          {me && (
+            <form action={signOutStaff} className="md:hidden">
+              <button className="text-xs underline text-ink-3">Sign out</button>
+            </form>
+          )}
         </div>
         {me && me.status === "active" && (
-          <nav className="flex flex-col px-3 gap-0.5" aria-label="Console">
+          <nav className="flex md:flex-col px-3 gap-0.5 overflow-x-auto whitespace-nowrap pb-2 md:pb-0" aria-label="Console">
             {[...nav, ...(me.isAdmin ? [{ href: "/clinic/admin", label: "Admin: staff & leads" }] : [])].map((n) => (
               <Link key={n.href} href={n.href} className="rounded px-2 py-1.5 text-sm text-ink-2 hover:bg-white hover:text-ink">
                 {n.label}
@@ -38,7 +43,7 @@ export default async function ClinicLayout({ children }: LayoutProps<"/clinic">)
             ))}
           </nav>
         )}
-        <div className="mt-auto px-5 py-5 text-xs text-ink-3 leading-relaxed">
+        <div className="mt-auto px-5 py-3 md:py-5 text-xs text-ink-3 leading-relaxed hidden md:block">
           {me ? (
             <>
               <p className="text-ink-2 font-semibold">{me.name}</p>
@@ -56,7 +61,7 @@ export default async function ClinicLayout({ children }: LayoutProps<"/clinic">)
         </div>
       </aside>
       <main className="flex-1 min-w-0">
-        <div className="max-w-6xl px-8 py-8">{children}</div>
+        <div className="max-w-6xl px-4 md:px-8 py-5 md:py-8">{children}</div>
       </main>
     </div>
   );
