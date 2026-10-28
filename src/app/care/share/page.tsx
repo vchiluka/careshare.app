@@ -36,12 +36,12 @@ export default async function Share({ searchParams }: PageProps<"/care/share">) 
 
       {reveal && revealed && (
         <div className="card mt-6 print:border-0">
-          <div className="flex flex-wrap items-start gap-6">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 sm:gap-6">
             <div className="shrink-0 bg-white p-2 rounded-lg border border-rule" dangerouslySetInnerHTML={{ __html: qr }} />
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 w-full flex-1 text-center sm:text-left">
               <div className="text-xs uppercase tracking-wide text-ink-3">For {revealed.label}</div>
               <div className="mt-2 text-sm text-ink-3">PIN, read it to them</div>
-              <div className="display text-4xl tracking-[0.3em] tnum">{reveal.pin}</div>
+              <div className="display text-5xl sm:text-4xl tracking-[0.25em] tnum">{reveal.pin}</div>
               <div className="mt-3 text-sm text-ink-3">Or the link</div>
               <div className="text-sm break-all">{viewerUrl}</div>
               <div className="mt-3 text-xs text-ink-3">
