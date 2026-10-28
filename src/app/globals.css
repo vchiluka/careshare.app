@@ -132,8 +132,8 @@ table.data tr.row-link:hover td { background: var(--paper-2); }
   table.data { display: block; overflow-x: auto; white-space: nowrap; }
   /* Room for the bottom bar. */
   [data-face="care"] main { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
-  /* Primary calls to action go full width. */
-  [data-face="care"] .btn-primary:not(.inline) { width: 100%; }
+  /* Primary calls to action that stand alone in a form go full width; buttons inside flex rows keep their size. */
+  [data-face="care"] form > .btn-primary:only-of-type:not(.inline) { width: 100%; }
   /* Long tokens (links, codes) never widen the page. */
   [data-face="care"] { overflow-wrap: anywhere; }
   .care-topnav { display: none; }

@@ -37,12 +37,12 @@ export default async function CareSignIn() {
       <p className="mt-3 text-ink-2">
         In the pilot you sign in with the same CLEAR or ID.me account that verified who you are. This demo lets you pick a caregiver instead. You still have to be verified, and the clinic still has to confirm you, before anything from the record appears.
       </p>
-      <div className="card mt-8 flex items-center justify-between gap-4">
-        <div>
+      <div className="card mt-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="min-w-0">
           <div className="font-bold">New here?</div>
           <div className="text-sm text-ink-2">Create your account, verify who you are, add the person you care for, and connect their Medicare records. About ten minutes.</div>
         </div>
-        <Link href="/care/register" className="btn btn-primary shrink-0">Register</Link>
+        <Link href="/care/register" className="btn btn-primary btn-lg sm:shrink-0 text-center">Register</Link>
       </div>
 
       {accounts.length > 0 && (
