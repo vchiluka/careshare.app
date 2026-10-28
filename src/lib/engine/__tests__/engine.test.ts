@@ -240,3 +240,15 @@ describe("outcomes", () => {
     expect(r.measures.find((m) => m.id === "awv")?.value).toBe(100);
   });
 });
+
+describe("ZBI measurement cadence", () => {
+  it("asks for a baseline 14 days after enrollment and a follow-up after 60 days", () => {
+    const noBaseline = household({ enrolledOn: "2026-09-01" }, { health: { phq2: [], bp: [], zbi: [], hasHomeBpCuff: false } });
+    expect(computeSignals(noBaseline, "2026-10-01").map((s) => s.rule)).toContain("ZBI_BASELINE_DUE");
+    const fresh = household({ enrolledOn: "2026-09-25" }, { health: { phq2: [], bp: [], zbi: [], hasHomeBpCuff: false } });
+    expect(computeSignals(fresh, "2026-10-01").map((s) => s.rule)).not.toContain("ZBI_BASELINE_DUE");
+    const stale = household({ enrolledOn: "2026-05-01" }, { health: { phq2: [], bp: [], zbi: [{ date: "2026-07-01", items: new Array(12).fill(1), total: 12, context: "baseline" }], hasHomeBpCuff: false } });
+    expect(computeSignals(stale, "2026-10-01").map((s) => s.rule)).toContain("ZBI_FOLLOWUP_DUE");
+    expect(computeSignals(stale, "2026-08-01").map((s) => s.rule)).not.toContain("ZBI_FOLLOWUP_DUE");
+  });
+});

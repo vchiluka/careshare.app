@@ -38,7 +38,7 @@ export function buildSelfRegisteredHousehold(input: { ids: { household: string; 
   const d = a.pending ?? { startedAt: new Date().toISOString() };
   const t = careTerm(d.term);
   const c = d.consent!;
-  const consent = buildConsent({ id: ids.consent, caregiverId: ids.caregiver, basis: c.basis, typedSignature: c.typedSignature, signedAt: c.signedAt, asOf, shareDirectory: c.shareDirectory, shareEvaluator: c.shareEvaluator, attestedFrom: c.attestedFrom });
+  const consent = buildConsent({ id: ids.consent, caregiverId: ids.caregiver, basis: c.basis, typedSignature: c.typedSignature, signedAt: c.signedAt, asOf, shareDirectory: c.shareDirectory, shareEvaluator: c.shareEvaluator, attestedFrom: c.attestedFrom, patientSignature: c.patientSignature });
   const lives = d.livesWith ?? true;
   const localityFips = d.localityFips || a.localityFips;
   const h: Household = {

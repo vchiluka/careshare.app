@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { acknowledgeEscalation, resolveEscalation } from "@/app/actions";
 import { Pill, Section, severityTone } from "@/components/ui";
-import { CADENCE_LABEL, fmtDate, TIER_LABELS, zbi12Band } from "@/lib/engine";
+import { CADENCE_LABEL, fmtDate, isSnoozed, TIER_LABELS, zbi12Band } from "@/lib/engine";
 import type { HouseholdView } from "@/lib/services/household-view";
 
 export function OverviewTab({ view }: { view: HouseholdView }) {
-  const { h, signals, cadence, primary, tier, staffById } = view;
-  const open = h.escalations.filter((e) => e.status !== "resolved").sort((a, b) => ({ critical: 0, warning: 1, info: 2 })[a.severity] - ({ critical: 0, warning: 1, info: 2 })[b.severity]);
+  const { h, asOf, signals, cadence, primary, tier, staffById } = view;
+  const open = h.escalations.filter((e) => e.status !== "resolved" && !isSnoozed(e, asOf)).sort((a, b) => ({ critical: 0, warning: 1, info: 2 })[a.severity] - ({ critical: 0, warning: 1, info: 2 })[b.severity]);
   const infos = signals.filter((s) => s.severity === "info");
   const lastZ = primary?.health.zbi.at(-1);
   const lastP = primary?.health.phq2.at(-1);

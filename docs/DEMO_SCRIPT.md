@@ -40,6 +40,10 @@ Household → Monthly summary and documentation: contacts and minutes by stream,
 
 Sign in as Geneva. Her authorization was signed 94 days ago and has lapsed, so the record is closed and she is asked to sign again; her own check-in still works. Sign; it reopens. Denise's, signed 83 days ago, shows the amber "lapses in 6 days" banner instead.
 
+## 4c. The neurologist two hours away (45 seconds) — Denise again
+
+Share with a provider: choose "Neurologist or memory clinic", press Create. A QR code and a six-digit PIN. Open the link in a private window: PIN prompt, then Mabel's medicines with sources, the care plan, who to call, and "Download as FHIR R4". Back in Denise's window, the link shows one opening; press Withdraw and the private window now says the family withdrew it. Line to land: "The front desk in Roanoke never asked her to fill out a clipboard, and she never handed over her login."
+
 ## 5. What the pilot reports (1 minute)
 
 Pilot outcomes: People Served (Appendix A only), the three KPOs, every measure with its definition, by locality and by tier. "Every number here recomputes from the record. An evaluator can check it."

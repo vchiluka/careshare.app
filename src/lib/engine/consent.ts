@@ -36,7 +36,7 @@ export function hasActiveConsent(h: Pick<Household, "consents">, caregiverId: st
   return s === "active" || s === "expiring";
 }
 
-export function buildConsent(input: { id: string; caregiverId: string; basis: ConsentBasis; typedSignature: string; signedAt: string; asOf: string; shareDirectory: boolean; shareEvaluator: boolean; attestedFrom?: string }): ConsentRecord {
+export function buildConsent(input: { id: string; caregiverId: string; basis: ConsentBasis; typedSignature: string; signedAt: string; asOf: string; shareDirectory: boolean; shareEvaluator: boolean; attestedFrom?: string; patientSignature?: string }): ConsentRecord {
   return {
     id: input.id,
     caregiverId: input.caregiverId,
@@ -49,6 +49,7 @@ export function buildConsent(input: { id: string; caregiverId: string; basis: Co
     shareWith: { clinic: true, directoryPartner: input.shareDirectory, evaluator: input.shareEvaluator },
     status: "active",
     attestedFrom: input.attestedFrom,
+    patientSignature: input.basis === "patient" && input.patientSignature?.trim() ? input.patientSignature.trim().slice(0, 120) : undefined,
   };
 }
 

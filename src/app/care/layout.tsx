@@ -16,6 +16,7 @@ const tabs = [
   { href: "/care/checkin", label: "My check-in" },
   { href: "/care/resources", label: "Help nearby" },
   { href: "/care/learn", label: "Guides" },
+  { href: "/care/help-now", label: "Help now" },
 ];
 
 export default async function CareLayout({ children }: LayoutProps<"/care">) {

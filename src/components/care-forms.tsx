@@ -103,6 +103,11 @@ export function ConsentFields({ patientName, signerName, previous, them }: { pat
         </label>
       </fieldset>
       <label className="field">
+        <span>If {them ?? "the person you care for"} can agree and wants to, they can sign here too (optional)</span>
+        <input name="patientSignature" placeholder={patientName === "the person named above" ? "Their full name" : patientName} autoComplete="off" />
+        <span className="text-xs font-normal text-ink-3">Only when you chose the first basis above. Their own name in their own hand (or typed with them watching) tells the clinic they took part in this decision.</span>
+      </label>
+      <label className="field">
         <span>Type your full name to sign</span>
         <input name="typedSignature" placeholder={signerName} required minLength={3} autoComplete="off" />
         <span className="text-xs font-normal text-ink-3">Typing your name here is your signature. We record the date, time, and a partial network address with it.</span>

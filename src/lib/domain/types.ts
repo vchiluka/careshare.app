@@ -106,7 +106,7 @@ export interface AddPatientDraft {
   localityFips?: string;
   /** How the caregiver will get the Medicare data: she has the login; card but no account yet; no Medicare. */
   route?: "login" | "card" | "none";
-  consent?: { basis: ConsentBasis; typedSignature: string; signedAt: ISODateTime; shareDirectory: boolean; shareEvaluator: boolean; attestedFrom?: string };
+  consent?: { basis: ConsentBasis; typedSignature: string; patientSignature?: string; signedAt: ISODateTime; shareDirectory: boolean; shareEvaluator: boolean; attestedFrom?: string };
   /** What Medicare returned, held until the caregiver confirms it is the right person. */
   import?: MedicareImport;
   /** Typed details, for the no-Medicare route. */
@@ -237,6 +237,40 @@ export interface ConsentRecord {
   revokedAt?: ISODateTime;
   /** Request fingerprint for the audit trail: truncated IP and user agent family, no more. */
   attestedFrom?: string;
+  /** When the basis is the patient's own consent and she can sign: her typed name, co-signed on the same form. */
+  patientSignature?: string;
+}
+
+/**
+ * A time-limited link to a FHIR R4 bundle of the record (care plan, medicines, consent, latest summary), for
+ * a provider the family reaches who is not on the platform: the memory clinic, the ED, adult day. Modeled on
+ * SMART Health Links (viewer URL, expiry, PIN); the secret and PIN are stored hashed. Every open is audited.
+ */
+export interface ShareLink {
+  id: string;
+  /** SHA-256 of the URL secret. */
+  tokenHash: string;
+  /** SHA-256 of the 6-digit PIN. */
+  pinHash: string;
+  label: string;
+  createdBy: string; // caregiver id
+  createdAt: ISODateTime;
+  expiresAt: ISODateTime;
+  revokedAt?: ISODateTime;
+  opens: number;
+  lastOpenedAt?: ISODateTime;
+}
+
+/** A second caregiver joins with a code after verifying her own identity; the code is single-use. */
+export interface CaregiverInvite {
+  code: string;
+  givenName: string;
+  relationship: CaregiverRelationship;
+  createdBy: string; // caregiver id
+  createdAt: ISODateTime;
+  expiresAt: ISODateTime;
+  usedBy?: string; // account id
+  usedAt?: ISODateTime;
 }
 
 export const CONSENT_VALID_DAYS = 90;
@@ -399,6 +433,8 @@ export type EscalationRule =
   | "AWV_OVERDUE"
   | "COGNITIVE_ASSESSMENT_DUE"
   | "CAREGIVER_OWN_VISIT_OVERDUE"
+  | "ZBI_BASELINE_DUE"
+  | "ZBI_FOLLOWUP_DUE"
   | "STAGING_CONFLICT"
   | "HOSPICE_THRESHOLD";
 
@@ -421,6 +457,9 @@ export interface Escalation extends Signal {
   id: string;
   raisedOn: ISODate;
   status: "open" | "acknowledged" | "resolved";
+  /** Hidden from the queue until this date; the rule still runs and re-raises after. Alert-fatigue control. */
+  snoozedUntil?: ISODate;
+  snoozedBy?: string;
   acknowledgedBy?: string;
   acknowledgedOn?: ISODate;
   resolvedOn?: ISODate;
@@ -559,6 +598,10 @@ export interface Household {
   patient: Patient;
   caregivers: Caregiver[];
   consents: ConsentRecord[];
+  /** "Share with a provider" links the caregiver created: time-limited, PIN-protected, audited. */
+  shares?: ShareLink[];
+  /** Invitations for a second caregiver to join through her own verified account. */
+  invites?: CaregiverInvite[];
   status: HouseholdStatus;
   enrolledOn?: ISODate;
   referralSource: "clinic" | "directory" | "aaa" | "hospital_discharge" | "self";

@@ -27,6 +27,7 @@ const CG = "cs_caregiver";
 const ST = "cs_staff";
 const PROOF = "cs_proof";
 const BB = "cs_bb";
+const REVEAL = "cs_reveal";
 const DAY = 24 * 60 * 60 * 1000;
 
 export async function setCaregiverSession(s: Omit<CaregiverSession, "startedAt">) {
@@ -49,12 +50,21 @@ export async function clearStaffSession() {
   (await cookies()).delete(ST);
 }
 
-export async function setFlowSession(kind: "proof" | "bb", payload: unknown) {
-  (await cookies()).set(kind === "proof" ? PROOF : BB, await signPayload(payload), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 30 });
+type FlowKind = "proof" | "bb" | "reveal";
+const flowName = (k: FlowKind) => (k === "proof" ? PROOF : k === "bb" ? BB : REVEAL);
+
+const FLOW_MAX_AGE: Record<FlowKind, number> = { proof: 60 * 30, bb: 60 * 30, reveal: 60 * 5 };
+
+export async function setFlowSession(kind: FlowKind, payload: unknown) {
+  (await cookies()).set(flowName(kind), await signPayload(payload), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: FLOW_MAX_AGE[kind] });
 }
-export async function takeFlowSession<T>(kind: "proof" | "bb"): Promise<T | null> {
+/** Read without consuming (pages cannot modify cookies); the cookie's own max-age bounds the window. */
+export async function peekFlowSession<T>(kind: FlowKind): Promise<T | null> {
+  return verifyPayload<T>((await cookies()).get(flowName(kind))?.value, FLOW_MAX_AGE[kind] * 1000);
+}
+export async function takeFlowSession<T>(kind: FlowKind): Promise<T | null> {
   const jar = await cookies();
-  const name = kind === "proof" ? PROOF : BB;
+  const name = flowName(kind);
   const v = await verifyPayload<T>(jar.get(name)?.value, 30 * 60 * 1000);
   jar.delete(name);
   return v;

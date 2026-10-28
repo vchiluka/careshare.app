@@ -39,17 +39,6 @@ export default async function AddPatient({ searchParams }: PageProps<"/care/add-
   const v = voice(d?.term, d?.patientFirstName);
   const t = careTerm(d?.term);
 
-  const Progress = ({ current }: { current: number }) => (
-    <ol className="flex flex-wrap gap-2 text-xs">
-      {["Who", "Medicare access", "Your authorization", "Their record", "Confirm"].map((label, i) => (
-        <li key={label}>
-          <Pill kind={i < current ? "green" : i === current ? "accent" : "neutral"}>
-            {i + 1}. {label}
-          </Pill>
-        </li>
-      ))}
-    </ol>
-  );
   const cancel = (
     <form action={cancelDraft} className="mt-8">
       <button className="btn btn-quiet text-sm">Stop for now (your answers are kept)</button>
@@ -329,5 +318,19 @@ export default async function AddPatient({ searchParams }: PageProps<"/care/add-
       <p className="mt-4 text-xs text-ink-3">Saying yes creates {v.their} record with {imp ? "what Medicare returned" : "what you typed"} and your signed authorization. The clinic for your county is told, and confirms you as representative at your first contact.</p>
       {cancel}
     </div>
+  );
+}
+
+function Progress({ current }: { current: number }) {
+  return (
+    <ol className="flex flex-wrap gap-2 text-xs">
+      {["Who", "Medicare access", "Your authorization", "Their record", "Confirm"].map((label, i) => (
+        <li key={label}>
+          <Pill kind={i < current ? "green" : i === current ? "accent" : "neutral"}>
+            {i + 1}. {label}
+          </Pill>
+        </li>
+      ))}
+    </ol>
   );
 }

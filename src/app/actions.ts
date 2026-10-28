@@ -12,6 +12,7 @@ import type { AddPatientDraft, Appointment, CareTerm, CareTier, Caregiver, Careg
 import { CLINICAL_LEAD_ROLES, CONSENT_FORM_VERSION } from "@/lib/domain/types";
 import { CARE_TERMS, careTerm } from "@/lib/domain/care-terms";
 import { buildSelfRegisteredHousehold, patientFactsFromImport, type PatientFacts } from "@/lib/services/self-register";
+import { newShareLink } from "@/lib/services/share";
 import { ALL_SCOPES, buildConsent, buildMonthlySummary, CADENCE_DAYS, computeSignals, determineTier, hasActiveConsent, phq2Total, primaryCaregiver, supersedeConsents, zbi12Total } from "@/lib/engine";
 import { blueButtonMode, getBlueButtonAdapter } from "@/lib/integrations/bluebutton";
 import { getDirectoryAdapter } from "@/lib/integrations/directory";
@@ -214,11 +215,12 @@ export async function signInAsAccount(fd: FormData) {
   redirect(cg ? "/care/home" : "/care/start");
 }
 
-function readConsentForm(fd: FormData): { basis: ConsentBasis; typedSignature: string; shareDirectory: boolean; shareEvaluator: boolean; attest: boolean } {
+function readConsentForm(fd: FormData): { basis: ConsentBasis; typedSignature: string; patientSignature?: string; shareDirectory: boolean; shareEvaluator: boolean; attest: boolean } {
   const b = str(fd, "basis");
   return {
     basis: b === "poa_healthcare" || b === "legal_guardian" ? b : "patient",
     typedSignature: str(fd, "typedSignature"),
+    patientSignature: str(fd, "patientSignature") || undefined,
     shareDirectory: str(fd, "shareDirectory") === "on",
     shareEvaluator: str(fd, "shareEvaluator") === "on",
     attest: str(fd, "attest") === "on",
@@ -263,7 +265,7 @@ export async function draftConsent(fd: FormData) {
   const { a } = await requireVerifiedAccount();
   const form = readConsentForm(fd);
   if (!form.attest || form.typedSignature.length < 3) redirect("/care/add-patient?step=consent&error=signature");
-  await saveDraft(a, { consent: { basis: form.basis, typedSignature: form.typedSignature.slice(0, 120), signedAt: new Date().toISOString(), shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() } });
+  await saveDraft(a, { consent: { basis: form.basis, typedSignature: form.typedSignature.slice(0, 120), patientSignature: form.patientSignature, signedAt: new Date().toISOString(), shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() } });
   await repo().audit({ actor: `account:${a.id}`, action: "consent.signed_draft", reference: `${form.basis}:v${CONSENT_FORM_VERSION}` });
   redirect(a.pending?.route === "none" ? "/care/add-patient?step=details" : "/care/add-patient?step=medicare");
 }
@@ -357,11 +359,14 @@ export async function signConsent(fd: FormData) {
   if (!verified) redirect("/care/home");
   const form = readConsentForm(fd);
   if (!form.attest || form.typedSignature.length < 3) redirect("/care/consent?error=signature");
-  const consent = buildConsent({ id: newId("cons"), caregiverId: c.id, basis: form.basis, typedSignature: form.typedSignature, signedAt: new Date().toISOString(), asOf, shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() });
+  const consent = buildConsent({ id: newId("cons"), caregiverId: c.id, basis: form.basis, typedSignature: form.typedSignature, patientSignature: form.patientSignature, signedAt: new Date().toISOString(), asOf, shareDirectory: form.shareDirectory, shareEvaluator: form.shareEvaluator, attestedFrom: await attestedFrom() });
   await repo().updateHousehold(h.id, (d) => {
     d.consents = [...supersedeConsents(d.consents ?? [], c.id), consent];
     const cg = d.caregivers.find((x) => x.id === c.id)!;
-    if (cg.proxy.status === "not_requested" || cg.proxy.status === "revoked") {
+    if (cg.proxy.status !== "confirmed" && cg.accountId && d.origin === "self_registered") {
+      // Self-service household: a verified caregiver's own signature opens her view until the clinic confirms.
+      cg.proxy = { ...cg.proxy, status: "self_attested", requestedOn: cg.proxy.requestedOn ?? asOf, consentBasis: form.basis, consentRecordedOn: asOf, scope: ALL_SCOPES };
+    } else if (cg.proxy.status === "not_requested" || cg.proxy.status === "revoked") {
       cg.proxy.status = "requested";
       cg.proxy.requestedOn = asOf;
     }
@@ -548,6 +553,95 @@ export async function caregiverReferral(fd: FormData) {
   revalidateAll(h.id);
 }
 
+// ---------------- Caregiver: share with a provider, care circle ----------------
+
+const SHARE_LABELS = ["Emergency department", "Neurologist or memory clinic", "Adult day program", "Home care agency", "Hospital or rehab", "Pharmacy", "Another family member", "Other"];
+
+/** Create a 72-hour, PIN-protected link to the FHIR record for a provider who is not on the platform. */
+export async function createShareLink(fd: FormData) {
+  const { h, c, asOf } = await requireCaregiver();
+  if (!recordOpen(h, c, asOf)) redirect("/care/home");
+  const label = SHARE_LABELS.includes(str(fd, "label")) ? str(fd, "label") : str(fd, "labelOther") || "Other";
+  const { link, secret, pin } = await newShareLink({ id: newId("shr"), caregiverId: c.id, label, now: new Date() });
+  await repo().updateHousehold(h.id, (d) => {
+    d.shares = [...(d.shares ?? []), link];
+  });
+  await setFlowSession("reveal", { shareId: link.id, secret, pin });
+  await repo().audit({ actor: `caregiver:${c.id}`, action: "share.created", householdId: h.id, reference: `${link.id}:${label}`, detail: `expires ${link.expiresAt}` });
+  revalidateAll(h.id);
+  redirect("/care/share?created=1");
+}
+
+export async function revokeShareLink(fd: FormData) {
+  const { h, c } = await requireCaregiver();
+  const id = str(fd, "shareId");
+  await repo().updateHousehold(h.id, (d) => {
+    const l = (d.shares ?? []).find((x) => x.id === id && x.createdBy === c.id);
+    if (l && !l.revokedAt) l.revokedAt = new Date().toISOString();
+  });
+  await repo().audit({ actor: `caregiver:${c.id}`, action: "share.revoked", householdId: h.id, reference: id });
+  revalidateAll(h.id);
+  redirect("/care/share");
+}
+
+/** Invite a second caregiver. She registers and verifies herself, then enters this code. Single use, 14 days. */
+export async function createInvite(fd: FormData) {
+  const { h, c, asOf } = await requireCaregiver();
+  if (!recordOpen(h, c, asOf)) redirect("/care/home");
+  const givenName = str(fd, "givenName");
+  const relationship = (str(fd, "relationship") as Caregiver["relationship"]) || "other";
+  if (!givenName) redirect("/care/circle?error=name");
+  const code = `${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
+  await repo().updateHousehold(h.id, (d) => {
+    d.invites = [...(d.invites ?? []), { code, givenName, relationship, createdBy: c.id, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 14 * 86400000).toISOString() }];
+  });
+  await repo().audit({ actor: `caregiver:${c.id}`, action: "circle.invited", householdId: h.id, reference: relationship });
+  revalidateAll(h.id);
+  redirect("/care/circle?invited=1");
+}
+
+/** A verified, registered caregiver joins a household with an invite code; she signs her own authorization next. */
+export async function joinWithInvite(fd: FormData) {
+  const { a, asOf } = await requireVerifiedAccount();
+  const code = str(fd, "code").replace(/\s/g, "");
+  const hs = await repo().households();
+  const now = Date.now();
+  const target = hs.find((h) => (h.invites ?? []).some((i) => i.code.replace("-", "") === code.replace("-", "") && !i.usedBy && Date.parse(i.expiresAt) > now));
+  if (!target) redirect("/care/start?error=invite");
+  const invite = target.invites!.find((i) => i.code.replace("-", "") === code.replace("-", ""))!;
+  const cgId = newId("cg");
+  await repo().updateHousehold(target.id, (d) => {
+    d.caregivers.push({
+      id: cgId,
+      accountId: a.id,
+      givenName: a.givenName,
+      familyName: a.familyName,
+      birthDate: a.birthDate,
+      relationship: invite.relationship,
+      livesWithPatient: false,
+      localityFips: a.localityFips,
+      phone: a.phone,
+      email: a.email,
+      access: a.access,
+      isPrimary: d.caregivers.length === 0,
+      identity: a.identity,
+      proxy: { status: "requested", requestedOn: asOf, scope: [] },
+      health: { phq2: [], bp: [], zbi: [], hasHomeBpCuff: false },
+      hoursPerWeek: 10,
+    });
+    const inv = (d.invites ?? []).find((i) => i.code === invite.code)!;
+    inv.usedBy = a.id;
+    inv.usedAt = new Date().toISOString();
+  });
+  a.householdIds.push(target.id);
+  a.pending = undefined;
+  await repo().upsertAccount(a);
+  await setCaregiverSession({ accountId: a.id, householdId: target.id, caregiverId: cgId });
+  await repo().audit({ actor: `account:${a.id}`, action: "circle.joined", householdId: target.id, reference: invite.relationship });
+  revalidateAll(target.id);
+  redirect("/care/consent?joined=1");
+}
+
 // ---------------- Staff: session ----------------
 
 export async function signInAsStaff(fd: FormData) {
@@ -703,6 +797,24 @@ export async function logContact(fd: FormData) {
     d.escalations = d.escalations.map((e) => (e.rule === "CADENCE_OVERDUE" && e.status !== "resolved" ? { ...e, status: "resolved", resolvedOn: asOf, resolvedBy: staffId, resolution: "Contact logged." } : e));
   });
   await repo().audit({ actor: `staff:${staffId}`, action: "contact.logged", householdId, reference: `${kind}:${minutes}m` });
+  revalidateAll(householdId);
+}
+
+export async function snoozeEscalation(fd: FormData) {
+  const staffId = await requireStaff();
+  const householdId = str(fd, "householdId");
+  const id = str(fd, "escalationId");
+  const days = Math.min(30, Math.max(1, num(fd, "days") || 7));
+  const asOf = await repo().asOf();
+  const until = new Date(Date.parse(asOf) + days * 86400000).toISOString().slice(0, 10);
+  await repo().updateHousehold(householdId, (d) => {
+    const e = d.escalations.find((x) => x.id === id);
+    if (e && e.status !== "resolved") {
+      e.snoozedUntil = until;
+      e.snoozedBy = staffId;
+    }
+  });
+  await repo().audit({ actor: `staff:${staffId}`, action: "escalation.snoozed", householdId, reference: `${id}:${days}d` });
   revalidateAll(householdId);
 }
 

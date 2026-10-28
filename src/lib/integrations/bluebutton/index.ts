@@ -4,7 +4,7 @@ import { randomToken } from "../crypto";
 import { mapBlueButton } from "./fhir";
 import { createLiveBlueButtonAdapter } from "./live";
 import { syntheticBlueButton, type SyntheticProfile } from "./synthetic";
-import type { BlueButtonAdapter, BlueButtonCompleteResult, BlueButtonStartResult, BlueButtonSubject } from "./types";
+import type { BlueButtonAdapter, BlueButtonCompleteResult, BlueButtonStartResult } from "./types";
 
 export type * from "./types";
 export { coverageSummary, diagnosesFromImport, fillsFromImport, mapBlueButton } from "./fhir";

@@ -84,7 +84,11 @@ Vercel runs the app on many short-lived instances, so the memory driver cannot c
 
 `store/postgres.ts` runs on Neon serverless Postgres (`@neondatabase/serverless`, HTTP driver, no pool to manage on Vercel). Three tables: `cs_documents(kind, id, data jsonb)` for households, staff and caregiver accounts; `cs_audit` append-only; `cs_meta`. Reference data (localities, sites, resources, education) comes from the seed file. On first request with an empty database the driver creates the tables and loads the seed; `Reset demo data` wipes and reseeds. Selection is automatic: `DATABASE_URL` set → postgres, else memory; `STORE_DRIVER` overrides. Create the database from the Vercel project (Storage → Create Database → Neon); Vercel injects `DATABASE_URL`. Encrypted token storage for Blue Button refresh tokens is the next addition.
 
-## 7. Staff sign-in through a CSP
+## 7. Share with a provider (FHIR R4 export, SMART Health Link style)
+
+`integrations/fhir/export.ts` builds a FHIR R4 collection Bundle from a household (US Core and CARIN shapes where they exist). `services/share.ts` issues a 72-hour link: a 24-byte URL secret and a 6-digit PIN, both stored as SHA-256 hashes on the household; the public viewer `/share/[secret]` requires the PIN and `/share/[secret]/fhir` serves the bundle with `application/fhir+json`. The QR code carries the plain viewer URL (any camera opens it); the `shlink:/` form of the same link (payload: url, flag P, label, exp) is shown for apps that scan SMART Health Links. Full SHL conformance (encrypted manifest, JWE files) is the milestone-3 step toward a Medicare App Library listing. Every open and download is audited; the caregiver can withdraw a link.
+
+## 8. Staff sign-in through a CSP
 
 Clinic staff use the same CLEAR / ID.me integration as caregivers (`subject.kind = "staff"` in the proofing session). A new subject creates a `StaffUser` with `status: "pending"` and no role beyond `ma`; the pending page is all they can reach until an administrator approves them on `/clinic/admin`, setting role, site and admin flag. Returning subjects are matched on the CSP subject id. The demo role picker stays for the walkthrough and is replaced by the clinic's SSO (or CSP-only sign-in) in production.
 

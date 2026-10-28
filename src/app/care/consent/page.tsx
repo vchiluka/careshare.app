@@ -2,6 +2,7 @@ import Link from "next/link";
 import { revokeConsent, signConsent } from "@/app/actions";
 import { ConsentFields } from "@/components/care-forms";
 import { Notice, Pill } from "@/components/ui";
+import { voice } from "@/lib/domain/care-terms";
 import { consentFor, consentState, fmtDate } from "@/lib/engine";
 import { requireCare } from "@/lib/services/care-context";
 
@@ -31,6 +32,7 @@ export default async function Consent({ searchParams }: PageProps<"/care/consent
     <div className="max-w-2xl">
       <h1>Your authorization</h1>
       {sp.error === "signature" && <Notice kind="amber">Please type your name to sign and tick the confirmation box.</Notice>}
+      {sp.joined && <Notice kind="green">You are on {h.patient.givenName}&rsquo;s record. Sign your own authorization below and it opens for you.</Notice>}
       <div className="card mt-4">
         <div className="flex items-center justify-between gap-4">
           <h2>Status</h2>
@@ -59,7 +61,7 @@ export default async function Consent({ searchParams }: PageProps<"/care/consent
 
       <form action={signConsent}>
         <h2 className="mt-8">{current && st.state !== "revoked" ? "Re-affirm for another 90 days" : "Sign the authorization"}</h2>
-        <ConsentFields patientName={`${h.patient.givenName} ${h.patient.familyName}`} signerName={`${me.givenName} ${me.familyName}`} previous={current} />
+        <ConsentFields patientName={`${h.patient.givenName} ${h.patient.familyName}`} signerName={`${me.givenName} ${me.familyName}`} previous={current} them={voice(h.patient.term, h.patient.givenName).them} />
         <button className="btn btn-primary btn-lg w-full mt-6">Sign</button>
       </form>
 

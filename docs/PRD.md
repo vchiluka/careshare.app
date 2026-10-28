@@ -25,6 +25,9 @@ Implemented, on synthetic data, with every external seam mocked by default and l
 - Identity verification via CLEAR or ID.me (mock vendor page or live OIDC sandbox); failure path offers in-person verification at the clinic.
 - Gate, three parts in order: verified at IAL2; proxy confirmed by the clinic (or self-attested after self-registration until the clinic confirms); a signed authorization that has not lapsed. The authorization (`/care/consent`) names the basis (patient consent, health care POA, guardianship), is signed by typing the name, records time and a truncated request fingerprint, lasts 90 days, re-prompts from 14 days out, and can be revoked at any time. A lapsed or revoked authorization closes the record but not the caregiver's own check-ins.
 - Guides (`/care/learn`): fourteen short education items by topic, ordered by the patient's FAST stage when the clinic has recorded one; open before the record is.
+- Share with a provider (`/care/share`): a 72-hour, PIN-protected link and QR code (SMART Health Link payload offered alongside the plain URL) that opens a read-only view of the plan, medicines, who to call and recent emergency visits for anyone not on the platform, with the same content downloadable as a FHIR R4 Bundle (Patient, RelatedPerson, Consent, Condition, MedicationStatement, CarePlan, Observation, Encounter, DocumentReference). Secret and PIN are stored hashed; every open is audited; the caregiver can withdraw a link.
+- Care circle (`/care/circle`): who is verified on the record; invite a second caregiver by single-use code; she registers and verifies herself, joins, and signs her own authorization (self-attested on self-registered households, clinic-confirmed on clinic-enrolled ones). The authorization form lets the patient co-sign when the basis is her own consent.
+- Help right now (`/care/help-now`): 911, 988, the 24-hour dementia helpline, poison control and the clinic line in large type, open before verification.
 - Home: next visit and ride status, things to act on, watch-for list, who to call.
 - Care plan: tier in plain words, cadence, goals by owner, respite arrangement, diagnoses.
 - Medicines: one shared list with source badges; add a medicine; discrepancies the clinic wants to check; connect Medicare (Blue Button 2.0 mock or live) and see fills.
@@ -38,6 +41,8 @@ Implemented, on synthetic data, with every external seam mocked by default and l
 **Clinic Console**
 - Sign-in with CLEAR or ID.me (new staff land pending until an administrator approves them and sets role and site) or the demo role picker.
 - Administration (`/clinic/admin`, admins only): approve or decline pending staff; assign each household a clinical lead (physician, NP/PA or RN); caseload by lead; reassign. The lead shows on the household header and roster; Today counts the signed-in person's own households and the unassigned ones; the roster filters by lead ("Mine", "Unassigned").
+- Alert-fatigue control: non-critical escalations can be snoozed 3 to 30 days; snoozed items leave the queue and the household overview and return on the date; the rule keeps running.
+- Evaluator export (`/api/export/evaluator`, admins only): de-identified CSV, one row per household whose caregiver's current authorization includes evaluator sharing; salted household hash, months not dates, locality FIPS; each download audited. Measurement cadence signals (ZBI baseline due at 14 days, follow-up due at 60 days) keep the strain measure populated.
 - Today: critical signals to call on, contacts due, access to open.
 - Households roster with locality/status filters, tier, cadence, signal counts.
 - Household detail: overview (escalations with acknowledge/resolve, tier and cadence, household facts), caregiver and access (identity status, text the link, in-person verification attestation, proxy confirmation with consent basis, revoke, caregiver health with PHQ-2 routing, SMS prompts), care plan (goals, respite, staging and tier recompute, EHR link and CarePlan write), medications (reconciliation against claims with adopt/stop/confirm actions, clinic list, Part D fills), symptom log and ED visits, visits (schedule, arrange ride, complete/missed), messages, contacts (log with minutes and documentation stream), referrals (closed loop with report-back), monthly summary and documentation export, evidence (audit).
@@ -59,6 +64,7 @@ Out of scope for this build (designed for, not built): caregiver login (as oppos
 | Medication reconciliation: filled-not-listed within 180 days; listed-not-filled beyond supply + 30 and 100 days | `reconciliation.ts` | Pilot protocol |
 | Cadence overdue, missed visit, ride not arranged within 7 days, ED visit follow-up within 30 days, AWV and cognitive assessment within 12 months, caregiver own visit within 12 months | `signals.ts` | Pilot measures |
 | FAST 7a or beyond: hospice-threshold conversation | `signals.ts` | Clinical convention |
+| ZBI-12 baseline due 14 days after enrollment; follow-up due 60 days after the last | `signals.ts` | Pilot measurement protocol |
 | Outcome measures by KPO and Appendix A locality | `outcomes.ts` | RFA C-27-002 §4.2C, Appendix A |
 
 ## 5. Acceptance tests (behavioral)

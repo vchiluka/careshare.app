@@ -23,7 +23,7 @@ function fmt(m: Measure) {
 }
 
 export default async function Outcomes() {
-  await requireClinic();
+  const me = await requireClinic();
   const repo = getRepository();
   const [hs, localities, asOf] = await Promise.all([repo.households(), repo.localities(), repo.asOf()]);
   const r = outcomeReport(hs, localities, asOf);
@@ -35,6 +35,12 @@ export default async function Outcomes() {
       <p className="mt-1 text-ink-2 max-w-3xl">
         Every measure is computed from the record, by Appendix A locality, as of {fmtDate(asOf)}. These are the six-month measures the pilot reports; the definitions are written next to each so a reviewer, or the evaluator, can recompute them.
       </p>
+      {me.isAdmin && (
+        <p className="mt-3 text-sm">
+          <a href="/api/export/evaluator" className="btn btn-secondary">Download the evaluator file (CSV)</a>
+          <span className="text-ink-3 ml-3">De-identified; only households whose caregiver agreed to evaluator sharing on the authorization form. Each download is logged.</span>
+        </p>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-8">
         <Stat label="households active" value={headline("active").value ?? 0} sub={`${headline("households").value} enrolled`} />

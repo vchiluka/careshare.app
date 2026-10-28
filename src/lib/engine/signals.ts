@@ -159,6 +159,28 @@ export function computeSignals(h: Household, asOf: string): Signal[] {
         key: "CAREGIVER_OWN_VISIT_OVERDUE",
       });
     }
+    // --- Measurement cadence for the caregiver strain measure (ZBI-12 baseline, then every 60 days) ---
+    const lastZbi = cg.health.zbi.at(-1);
+    if (h.status === "active" && h.enrolledOn && !lastZbi && daysBetween(h.enrolledOn, asOf) >= 14) {
+      s.push({
+        rule: "ZBI_BASELINE_DUE",
+        severity: "info",
+        message: `${cg.givenName} has no baseline strain check-in (ZBI-12) ${daysBetween(h.enrolledOn, asOf)} days after enrollment.`,
+        action: "Ask her to complete the check-in in the app, or administer it by phone at the next contact; the outcome measure needs a baseline.",
+        owner: "both",
+        key: "ZBI_BASELINE_DUE",
+      });
+    } else if (h.status === "active" && lastZbi && daysBetween(lastZbi.date, asOf) > 60) {
+      s.push({
+        rule: "ZBI_FOLLOWUP_DUE",
+        severity: "info",
+        message: `${cg.givenName}'s last strain check-in was ${daysBetween(lastZbi.date, asOf)} days ago.`,
+        action: "Prompt the monthly check-in by text or at the next contact.",
+        owner: "both",
+        key: `ZBI_FOLLOWUP_DUE:${lastZbi.date}`,
+        evidenceDate: lastZbi.date,
+      });
+    }
     // --- Access ---
     if (cg.identity.status !== "verified") {
       s.push({
@@ -302,4 +324,9 @@ export function labelPurpose(p: string): string {
 export function nextContactDue(h: Household, asOf: string): string | undefined {
   const c = cadenceStatus(h.carePlan.tier, h.contacts, asOf, h.enrolledOn);
   return c.nextDueOn ?? (h.enrolledOn ? addDays(h.enrolledOn, 7) : undefined);
+}
+
+/** Snoozed escalations stay out of the queue until the date passes; the rule keeps running. */
+export function isSnoozed(e: { snoozedUntil?: string; status: string }, asOf: string): boolean {
+  return e.status !== "resolved" && !!e.snoozedUntil && e.snoozedUntil > asOf;
 }

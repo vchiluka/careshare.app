@@ -21,6 +21,10 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
         {verifyMsg && <Notice kind={sp.verify === "ok" || sp.consent === "ok" ? "green" : "amber"}>{verifyMsg}</Notice>}
         <h1 className="mt-4">Hello, {me.givenName}.</h1>
         {me.identity.status !== "verified" ? <VerifyBlock status={me.identity.status} reason={me.identity.failureReason} sitePhone={site.phone} /> : access.needsConsent ? <ConsentBlock reason={access.reason} patient={h.patient.givenName} /> : <WaitingBlock status={me.proxy.status} patient={h.patient.givenName} sitePhone={site.phone} />}
+        <Link href="/care/help-now" className="card mt-6 block hover:bg-paper-2">
+          <h3>Help right now</h3>
+          <p className="text-ink-2 mt-1">911, the 988 crisis line, the 24-hour dementia helpline, poison control and the clinic line, in big type. Works before anything else does.</p>
+        </Link>
         {access.ownHealth && (
           <div className="card mt-6">
             <h2>While you wait: your own check-in</h2>
@@ -97,6 +101,20 @@ export default async function CareHome({ searchParams }: PageProps<"/care/home">
         <Link href="/care/resources" className="card hover:bg-paper-2">
           <h3>Help nearby</h3>
           <p className="text-ink-2 mt-1">Respite hours, adult day, rides and meals listed for {view.locality.name}.</p>
+        </Link>
+      </div>
+      <div className="grid md:grid-cols-3 gap-5 mt-5">
+        <Link href="/care/help-now" className="card hover:bg-paper-2 border-red/40">
+          <h3>Help right now</h3>
+          <p className="text-ink-2 mt-1">911, 988, the 24-hour dementia helpline, poison control, the clinic line. Big type.</p>
+        </Link>
+        <Link href="/care/share" className="card hover:bg-paper-2">
+          <h3>Share with a provider</h3>
+          <p className="text-ink-2 mt-1">A QR code and PIN that show the emergency department or a specialist {h.patient.givenName}&rsquo;s medicines and plan. 72 hours, every opening logged.</p>
+        </Link>
+        <Link href="/care/circle" className="card hover:bg-paper-2">
+          <h3>Who helps</h3>
+          <p className="text-ink-2 mt-1">{h.caregivers.length === 1 ? "Just you so far. Invite a sister or son with their own verified login." : `${h.caregivers.length} of you on this record.`}</p>
         </Link>
       </div>
       <div className="grid md:grid-cols-2 gap-5 mt-5">

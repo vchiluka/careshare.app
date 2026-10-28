@@ -1,6 +1,6 @@
 import { confirmProxy, recordInPersonVerification, revokeProxy, routePhq2, sendSmsPrompt } from "@/app/actions";
 import { Field, Pill, Section } from "@/components/ui";
-import { fmtDate, zbi12Band } from "@/lib/engine";
+import { fmtDate, zbi12Band, consentFor, consentState } from "@/lib/engine";
 import type { HouseholdView } from "@/lib/services/household-view";
 
 export function CaregiverTab({ view }: { view: HouseholdView }) {
@@ -68,6 +68,19 @@ export function CaregiverTab({ view }: { view: HouseholdView }) {
                     </span>
                   )}
                 </div>
+                {(() => {
+                  const cons = consentFor(h, c.id);
+                  const cs = consentState(cons, view.asOf);
+                  return cons ? (
+                    <p className="mt-2 text-sm text-ink-2">
+                      Caregiver authorization v{cons.version}: {cs.state}{cs.daysLeft !== undefined && cs.state !== "expired" ? ` (${cs.daysLeft} days left)` : ""}; basis {cons.basis.replaceAll("_", " ")}; signed {fmtDate(cons.signedAt.slice(0, 10))} as &ldquo;{cons.typedSignature}&rdquo;
+                      {cons.patientSignature ? <>; {h.patient.givenName} co-signed as &ldquo;{cons.patientSignature}&rdquo;</> : null}
+                      {cons.shareWith.evaluator ? "; evaluator sharing on" : "; evaluator sharing off"}.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-sm text-ink-3">No caregiver authorization signed yet.</p>
+                  );
+                })()}
                 {c.proxy.status !== "confirmed" ? (
                   verified ? (
                     <form action={confirmProxy} className="mt-3 card py-3 space-y-3">

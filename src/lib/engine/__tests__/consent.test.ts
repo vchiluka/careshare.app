@@ -29,3 +29,12 @@ describe("consent (90-day authorization)", () => {
     expect(hasActiveConsent({ consents }, "cg2", "2026-11-15")).toBe(false);
   });
 });
+
+describe("patient co-signature", () => {
+  it("is kept only when the basis is the patient's own consent", () => {
+    const withSig = buildConsent({ ...base, patientSignature: "Mabel Hairston" });
+    expect(withSig.patientSignature).toBe("Mabel Hairston");
+    const poa = buildConsent({ ...base, basis: "poa_healthcare", patientSignature: "Mabel Hairston" });
+    expect(poa.patientSignature).toBeUndefined();
+  });
+});
