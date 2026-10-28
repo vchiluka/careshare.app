@@ -217,6 +217,8 @@ export interface CaregiverAccount {
   registeredOn: ISODate;
   householdIds: string[];
   pending?: AddPatientDraft;
+  /** Wrong invitation codes entered; five locks the join form for this account. */
+  inviteFailures?: number;
 }
 
 export type ConsentBasis = "patient" | "poa_healthcare" | "legal_guardian";

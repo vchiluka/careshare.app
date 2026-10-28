@@ -20,7 +20,7 @@ export default async function Start({ searchParams }: PageProps<"/care/start">) 
   const locality = localities.find((l) => l.fips === account.localityFips);
   const site = sites.find((s) => s.localityFips === account.localityFips) ?? sites[0];
   const verified = account.identity.status === "verified" && account.identity.assurance === "IAL2";
-  const msg = sp.error === "invite" ? "That invitation code did not match, has been used, or has expired. Ask your family member to make a new one." : sp.verify === "ok" ? "You are verified. Thank you." : sp.verify === "failed" ? `Verification did not go through: ${String(sp.reason ?? "")}` : sp.verify === "error" ? (sp.reason ? `Verification could not start: ${String(sp.reason)}` : "The verification link expired. Please start again.") : sp.error === "verify_first" ? "Please verify your identity before adding a patient." : null;
+  const msg = sp.error === "invite_locked" ? "Too many wrong codes. Ask your family member to make a new invitation and call the clinic if you need help." : sp.error === "invite" ? "That invitation code did not match, has been used, or has expired. Ask your family member to make a new one." : sp.verify === "ok" ? "You are verified. Thank you." : sp.verify === "failed" ? `Verification did not go through: ${String(sp.reason ?? "")}` : sp.verify === "error" ? (sp.reason ? `Verification could not start: ${String(sp.reason)}` : "The verification link expired. Please start again.") : sp.error === "verify_first" ? "Please verify your identity before adding a patient." : null;
 
   return (
     <div className="max-w-2xl">
@@ -43,18 +43,24 @@ export default async function Start({ searchParams }: PageProps<"/care/start">) 
         <Step n={2} title="Add the person you care for" state={verified ? "now" : "later"}>
           <p className="text-sm text-ink-2">Who they are to you, a one-page authorization you sign by typing your name, then Medicare fills in the rest: their name, date of birth, coverage and every prescription filled. You type almost nothing. About ten minutes with the Medicare.gov login at hand.</p>
           {verified && (
-            <form action={joinWithInvite} className="mt-3 flex flex-wrap items-end gap-2">
-              <label className="field">
-                <span>Did a family member give you a code?</span>
-                <input name="code" placeholder="123-456" className="max-w-40" inputMode="numeric" />
-              </label>
-              <button className="btn btn-secondary">Join their record</button>
-            </form>
-          )}
-          {verified && (
-            <Link href="/care/add-patient" className="btn btn-primary mt-3">
+            <Link href="/care/add-patient" className="btn btn-primary btn-lg mt-3 w-full sm:w-auto text-center">
               {account.pending?.term ? `Continue adding ${voice(account.pending.term, account.pending.patientFirstName).them}` : "Add the person I care for"}
             </Link>
+          )}
+          {verified && (
+            <details className="mt-4 text-sm" open={sp.error === "invite" || sp.error === "invite_locked"}>
+              <summary className="cursor-pointer text-ink-2 underline">Is someone in your family already using CareShare for this person?</summary>
+              <div className="mt-2 card-soft">
+                <p className="text-ink-2">Then do not start a new record. Ask them to open <strong>Who helps</strong> in their CareShare and make you an invitation code (two groups of three digits, good for 14 days, usable once). Enter it here and you join the same record as a second verified caregiver, then sign your own authorization.</p>
+                <form action={joinWithInvite} className="mt-3 flex flex-wrap items-end gap-2">
+                  <label className="field">
+                    <span>Invitation code</span>
+                    <input name="code" placeholder="123-456" className="max-w-40" inputMode="numeric" autoComplete="one-time-code" />
+                  </label>
+                  <button className="btn btn-secondary inline">Join their record</button>
+                </form>
+              </div>
+            </details>
           )}
         </Step>
         <Step n={3} title="See what Medicare knows" state="later">

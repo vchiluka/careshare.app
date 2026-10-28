@@ -591,7 +591,14 @@ export async function createInvite(fd: FormData) {
   const givenName = str(fd, "givenName");
   const relationship = (str(fd, "relationship") as Caregiver["relationship"]) || "other";
   if (!givenName) redirect("/care/circle?error=name");
-  const code = `${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
+  // Six digits from the platform's CSPRNG, shown as 123-456; unique among open invitations across all households.
+  const open = new Set((await repo().households()).flatMap((x) => (x.invites ?? []).filter((i) => !i.usedBy && Date.parse(i.expiresAt) > Date.now()).map((i) => i.code)));
+  let code = "";
+  do {
+    const n = new Uint32Array(2);
+    crypto.getRandomValues(n);
+    code = `${100 + (n[0] % 900)}-${100 + (n[1] % 900)}`;
+  } while (open.has(code));
   await repo().updateHousehold(h.id, (d) => {
     d.invites = [...(d.invites ?? []), { code, givenName, relationship, createdBy: c.id, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 14 * 86400000).toISOString() }];
   });
@@ -604,10 +611,16 @@ export async function createInvite(fd: FormData) {
 export async function joinWithInvite(fd: FormData) {
   const { a, asOf } = await requireVerifiedAccount();
   const code = str(fd, "code").replace(/\s/g, "");
+  if ((a.inviteFailures ?? 0) >= 5) redirect("/care/start?error=invite_locked");
   const hs = await repo().households();
   const now = Date.now();
   const target = hs.find((h) => (h.invites ?? []).some((i) => i.code.replace("-", "") === code.replace("-", "") && !i.usedBy && Date.parse(i.expiresAt) > now));
-  if (!target) redirect("/care/start?error=invite");
+  if (!target) {
+    a.inviteFailures = (a.inviteFailures ?? 0) + 1;
+    await repo().upsertAccount(a);
+    await repo().audit({ actor: `account:${a.id}`, action: "circle.join_failed", reference: `attempt ${a.inviteFailures}` });
+    redirect("/care/start?error=invite");
+  }
   const invite = target.invites!.find((i) => i.code.replace("-", "") === code.replace("-", ""))!;
   const cgId = newId("cg");
   await repo().updateHousehold(target.id, (d) => {
