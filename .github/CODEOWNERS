@@ -1,0 +1,7 @@
+# Changes to these paths need the owner's review before they can merge.
+/db/                                    @vchiluka
+/src/lib/store/                         @vchiluka
+/src/lib/db/                            @vchiluka
+/src/lib/services/household-view.ts     @vchiluka
+/src/app/actions.ts                     @vchiluka
+/.github/                               @vchiluka

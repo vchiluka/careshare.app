@@ -1,23 +1,25 @@
-import { createBlobRepository } from "./blob";
 import { createMemoryRepository } from "./memory";
 import { createPostgresRepository } from "./postgres";
 import type { Repository } from "./repository";
 
-export type { Repository } from "./repository";
+export type { Repository, StoreHealth } from "./repository";
 
-export type StoreDriver = "memory" | "blob" | "postgres";
+export type StoreDriver = "memory" | "postgres";
 
 /**
- * STORE_DRIVER wins; otherwise what Vercel injected decides: DATABASE_URL (Neon) → postgres,
- * BLOB_READ_WRITE_TOKEN (Blob store) → blob, nothing → memory (per process; fine for `npm run dev`).
+ * STORE_DRIVER wins; otherwise DATABASE_URL (Neon) selects postgres and nothing selects memory.
+ * Memory is for `npm run dev` and tests only: on Vercel (VERCEL=1) a missing DATABASE_URL is a
+ * configuration error, not a reason to serve from process memory, so it throws at the first request.
  */
 export function storeDriver(): StoreDriver {
-  const v = process.env.STORE_DRIVER ?? (process.env.DATABASE_URL ? "postgres" : process.env.BLOB_READ_WRITE_TOKEN ? "blob" : "memory");
-  if (v !== "memory" && v !== "postgres" && v !== "blob") throw new Error(`STORE_DRIVER must be memory, blob or postgres, got "${v}".`);
+  const v = process.env.STORE_DRIVER ?? (process.env.DATABASE_URL ? "postgres" : "memory");
+  if (v !== "memory" && v !== "postgres") throw new Error(`STORE_DRIVER must be memory or postgres, got "${v}".`);
+  if (v === "memory" && process.env.VERCEL && process.env.ALLOW_MEMORY_STORE !== "1") {
+    throw new Error("Deployed environments must use the postgres store: set DATABASE_URL (or ALLOW_MEMORY_STORE=1 for a throwaway preview).");
+  }
   return v;
 }
 
 export function getRepository(): Repository {
-  const d = storeDriver();
-  return d === "postgres" ? createPostgresRepository() : d === "blob" ? createBlobRepository() : createMemoryRepository();
+  return storeDriver() === "postgres" ? createPostgresRepository() : createMemoryRepository();
 }

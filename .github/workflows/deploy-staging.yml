@@ -1,0 +1,36 @@
+# On every push to main: apply pending migrations to the staging database, then seed it if it is
+# empty. Vercel deploys the same commit to the staging environment in parallel through its Git
+# integration; migrations are written expand-then-contract (see db/migrations/0001_init.sql header),
+# so the order of the two does not matter, and the app reports 503 on /api/health until both are done.
+name: deploy-staging
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-staging
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Migrate staging
+        run: npm run db:migrate
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_STAGING_UNPOOLED }}
+      - name: Seed staging if empty (never resets)
+        run: npm run db:seed
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_STAGING_UNPOOLED }}
