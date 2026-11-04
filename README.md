@@ -31,7 +31,8 @@ Open `/care` and pick a caregiver, or `/clinic` and pick a staff role. The demo 
 src/lib/domain/types.ts        the household model (patient, caregivers, identity, proxy, plan, meds, logs, referrals, escalations)
 src/lib/engine/                pure rules: tiering, cadence, signals, reconciliation, outcomes, monthly summary (tests in __tests__)
 src/lib/integrations/          identity (mock + OIDC for CLEAR/ID.me), bluebutton, fhir, directory, sms — interface + mock + live, env-switched
-src/lib/store/                 Repository interface; memory driver over the synthetic seed
+src/lib/store/                 Repository interface; memory driver (local) and Postgres on Neon (deployed)
+db/migrations/                 versioned SQL schema, applied by CI (npm run db:migrate)
 src/lib/services/              read models for pages
 src/app/actions.ts             every mutation, each with an audit entry
 src/app/care/*                 CareShare Caregiver
@@ -48,4 +49,4 @@ Every seam is an environment variable; `/clinic/integrations` shows the current 
 
 ## Deploy
 
-Vercel, Node runtime. Set `CARESHARE_SECRET` (required in production) and `DEMO_AS_OF`. Production uses a private Vercel Blob store (`BLOB_READ_WRITE_TOKEN`, injected by Vercel) so records persist across instances and deploys. Adding a Neon database (Storage → Create Database → Neon) injects `DATABASE_URL` and the Postgres driver takes precedence on the next deploy. Without either, the memory store is per process and resets on every deploy.
+Vercel, Node runtime, Postgres on Neon. Set `CARESHARE_SECRET` (required in production), `DATABASE_URL` (pooled Neon string) and, below production, `DEMO_AS_OF`. CI applies `db/migrations` before each deploy and seeds staging; production is never seeded. Four environments (local memory, preview branch per pull request, `staging` tracking `main`, production tracking `production` with manual promote) are described in `docs/RUNBOOK.md`. Only production ever holds a real record.

@@ -9,13 +9,17 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "seed": "tsx scripts/generate-seed.ts"
+    "seed": "tsx scripts/generate-seed.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed-db.ts",
+    "typecheck": "tsc --noEmit",
+    "test:db": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://careshare_app@127.0.0.1:5433/careshare_test} vitest run src/lib/store/__tests__/postgres.test.ts"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.2.0",
     "@vercel/blob": "^2.8.2",
     "jose": "^6.2.13",
     "next": "^16.4.3",
+    "pg": "^8.23.1",
     "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -24,6 +28,7 @@
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",

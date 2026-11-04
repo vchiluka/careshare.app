@@ -31,16 +31,18 @@ A Next.js 16 app with two faces over one household record: CareShare Caregiver (
 - **A new rule:** pure function in `engine/`, doc comment with the clinical source, test in `__tests__`, surface through `computeSignals` or `outcomeReport`; only then a page.
 - **A new page:** server component, `force-dynamic`, read through `src/lib/services`, mutate through `src/app/actions.ts` (audit entry required). Use `ui.tsx` components; no component library.
 - **A live adapter:** implement the interface in `<vendor>.ts`, read config from env, register in the `get*()` switch, document variables in `.env.example`, `docs/INTEGRATIONS.md`, and `/clinic/integrations`. Keep the mock working.
-- **The store:** three drivers behind `Repository`: memory (default for `npm run dev`), `blob.ts` (Vercel Blob, used when `BLOB_READ_WRITE_TOKEN` is set; production today), `postgres.ts` (Neon, used when `DATABASE_URL` is set; takes precedence). Any new document kind goes through `Repository` so all three stay equivalent; `__tests__/blob.test.ts` exercises the blob driver with a mocked SDK.
+- **The store:** two drivers behind `Repository`: memory (`npm run dev`, unit tests) and `postgres.ts` (Neon; every deployed environment, selected by `DATABASE_URL`). The schema is versioned SQL in `db/migrations/` (`NNNN_name.sql` plus a `.down.sql`), applied by CI with `npm run db:migrate` before a deploy; the driver never creates tables and refuses to serve while a migration is pending. Every tenant-scoped query runs inside `withTenant()` (`src/lib/db/client.ts`), which sets `app.tenant_id` for the row-level security policies; the tenant comes from `src/lib/tenant.ts`. `audit.events` is append-only (rules plus a per-tenant hash chain, `src/lib/db/audit-hash.ts`). A new document kind or table is a new migration plus a change to both drivers; `__tests__/contract.ts` is the behaviour both must pass, and `npm run test:db` runs the Postgres suite against a real server (non-superuser role, so the isolation tests mean something). `blob.ts` remains only for the v1 demo project (branch `release/v1.0-rfa-baseline`, its own Vercel project and Blob store, synthetic data): it is chosen only by an explicit `STORE_DRIVER=blob` and refused wherever the environment is production, because Vercel Blob is not on Vercel's HIPAA covered list. `__tests__/selector.test.ts` pins those rules.
+- **Environments:** local (memory), preview (Neon branch per pull request from the staging project, synthetic), `staging` (Vercel custom environment tracking `main`, Neon `careshare-staging`, seeded, reset on demand), production (tracking `production`, Neon `careshare-prod`, never seeded, manual promote). Nothing but production ever holds a real record; `CARESHARE_ENV=production` makes seed, reset and `migrate --down` refuse. See `docs/RUNBOOK.md`.
 - **Education content:** `src/lib/content/education.ts`, paraphrased from public-domain guidance with the source named; no verbatim copying.
 
 ## Commands
 
 ```
-npm run dev   npm test   npm run lint   npm run build   npm run seed
+npm run dev   npm test   npm run test:db   npm run lint   npm run typecheck   npm run build   npm run seed
+npm run db:migrate [-- --status | --down NNNN]   npm run db:seed [-- --reset]
 ```
 
-Before committing: `npm test && npm run lint && npm run build` must pass.
+Before committing: `npm test && npm run lint && npm run typecheck && npm run build` must pass, and `npm run test:db` when the store or a migration changed. CI runs all of them plus a dependency audit and a secret scan on every pull request.
 
 ## Style
 

@@ -3,13 +3,22 @@ import type { AuditEntry, CaregiverAccount, ClinicSite, CommunityResource, Educa
 /**
  * Repository: the only way pages and actions touch data.
  *
- * STORE_DRIVER=memory (default) loads the synthetic seed into process memory and keeps edits there
- * until the process restarts. STORE_DRIVER=blob (or a BLOB_READ_WRITE_TOKEN) keeps each collection as a
- * private JSON blob in Vercel Blob; STORE_DRIVER=postgres (or any DATABASE_URL) uses a JSONB document
- * store in Postgres (Neon). Both seed themselves on first run.
+ * STORE_DRIVER=memory (default for `npm run dev` and unit tests) loads the synthetic seed into process
+ * memory and keeps edits there until the process restarts. STORE_DRIVER=postgres (or any DATABASE_URL)
+ * uses the Neon Postgres store, whose schema comes from db/migrations and whose data comes from
+ * `npm run db:seed` (staging, previews) or from real use (production). STORE_DRIVER=blob (explicit only)
+ * keeps the v1 demo deployment running on Vercel Blob with synthetic data; it is refused in production.
+ * The selector in index.ts refuses memory on Vercel and blob in production.
  */
+export interface StoreHealth {
+  driver: "memory" | "postgres" | "blob";
+  ok: boolean;
+  schemaVersion?: string;
+  pendingMigrations: string[];
+}
+
 export interface Repository {
-  readonly driver: "memory" | "blob" | "postgres";
+  readonly driver: "memory" | "postgres" | "blob";
   /** The demo clock (DEMO_AS_OF) or today. */
   asOf(): Promise<string>;
   localities(): Promise<Locality[]>;
@@ -33,5 +42,8 @@ export interface Repository {
 
   audit(entry: Omit<AuditEntry, "id" | "at">): Promise<AuditEntry>;
   auditLog(filter?: { householdId?: string; limit?: number }): Promise<AuditEntry[]>;
+  /** Replace all documents with the synthetic seed. Refused in production. The audit trail is kept. */
   reset(): Promise<void>;
+  /** For /api/health and /clinic/integrations: driver, schema version, pending migrations. */
+  health(): Promise<StoreHealth>;
 }

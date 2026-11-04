@@ -1,0 +1,126 @@
+# CI for every pull request and every push to main or production.
+#
+# Jobs:
+#   checks     unit tests (memory store), lint, typecheck, build, dependency audit, secret scan
+#   db-tests   the postgres store tests against a real Postgres 16 service container
+#   neon-tests the same tests against a throwaway branch of the Neon staging project (only when the
+#              NEON_API_KEY secret exists; forks and the first days of the repo skip it)
+#
+# No job here touches staging or production data; see deploy-staging.yml and release.yml for those.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, production]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks scans history on the branch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+        env:
+          CARESHARE_SECRET: ci-build-secret-not-for-production
+      - name: Dependency audit (high and critical fail the build)
+        run: npm audit --audit-level=high
+      - name: No Blob, no console outside the logger
+        run: |
+          if grep -rln "@vercel/blob" src scripts | grep -v "src/lib/store/blob.ts"; then echo "@vercel/blob may only be imported by src/lib/store/blob.ts"; exit 1; fi
+          if grep -rn "console\.\(log\|warn\|error\|info\)" src --include=*.ts --include=*.tsx | grep -v "src/lib/log.ts" | grep -v "__tests__"; then echo "console.* outside src/lib/log.ts"; exit 1; fi
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  db-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: careshare_app
+          POSTGRES_PASSWORD: careshare_app
+          POSTGRES_DB: careshare_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U careshare_app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Postgres store tests (row-level security, concurrency, audit chain, migrations)
+        run: npx vitest run src/lib/store/__tests__/postgres.test.ts
+        env:
+          TEST_DATABASE_URL: postgres://careshare_app:careshare_app@localhost:5432/careshare_test
+      - name: Migration dry run from empty (status, up, down, up)
+        run: |
+          npm run db:migrate -- --status
+          npm run db:migrate
+          npm run db:migrate -- --down 0001
+          npm run db:migrate
+          npm run db:seed
+        env:
+          DATABASE_URL: postgres://careshare_app:careshare_app@localhost:5432/careshare_test
+
+  neon-tests:
+    # Runs the same suite on a real Neon branch so pooling, TLS and the Neon role behave as in staging.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ secrets.NEON_STAGING_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Skip when Neon secrets are absent
+        id: gate
+        run: |
+          if [ -z "$NEON_API_KEY" ] || [ -z "$NEON_PROJECT_ID" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; echo "Neon secrets not set; skipping"; fi
+      - name: Create a throwaway branch
+        if: steps.gate.outputs.skip != 'true'
+        id: branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ env.NEON_PROJECT_ID }}
+          branch_name: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          api_key: ${{ env.NEON_API_KEY }}
+      - name: Postgres store tests on Neon
+        if: steps.gate.outputs.skip != 'true'
+        run: npx vitest run src/lib/store/__tests__/postgres.test.ts
+        env:
+          TEST_DATABASE_URL: ${{ steps.branch.outputs.db_url }}
+      - name: Delete the branch
+        if: always() && steps.gate.outputs.skip != 'true'
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ env.NEON_PROJECT_ID }}
+          branch: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          api_key: ${{ env.NEON_API_KEY }}

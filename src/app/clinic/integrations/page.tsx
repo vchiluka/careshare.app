@@ -4,15 +4,16 @@ import { directoryMode } from "@/lib/integrations/directory";
 import { ehrMode } from "@/lib/integrations/fhir";
 import { identityMode } from "@/lib/integrations/identity";
 import { mockSmsOutbox, smsMode } from "@/lib/integrations/sms";
-import { storeDriver } from "@/lib/store";
+import { getRepository, storeDriver } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 /** Shows every seam, its mode, and what live needs. Never shows secret values. */
-export default function Integrations() {
+export default async function Integrations() {
   const set = (k: string) => (process.env[k] ? "set" : "missing");
+  const health = await getRepository().health().catch((e: unknown) => ({ driver: storeDriver(), ok: false, schemaVersion: undefined, pendingMigrations: [e instanceof Error ? e.message : "unavailable"] }));
   const rows: { seam: string; mode: string; live: boolean; needs: string[]; notes: string }[] = [
-    { seam: "Store", mode: storeDriver(), live: storeDriver() !== "memory", needs: ["BLOB_READ_WRITE_TOKEN (Vercel Blob) or DATABASE_URL (Neon Postgres)"], notes: "Memory holds the seed per process and cannot share records across Vercel instances. Blob keeps each collection as a private JSON blob (current production). Postgres takes precedence when DATABASE_URL is set." },
+    { seam: "Store", mode: health.schemaVersion ? `${storeDriver()} (schema ${health.schemaVersion}${health.pendingMigrations.length ? `, pending ${health.pendingMigrations.join(", ")}` : ""})` : storeDriver(), live: storeDriver() !== "memory" && health.ok, needs: ["DATABASE_URL (Neon Postgres, pooled); migrations applied by CI"], notes: "Memory holds the synthetic seed per process and is for local development and tests only. Every deployed environment uses Postgres on Neon: the schema comes from db/migrations, staging is seeded by npm run db:seed, production is never seeded." },
     { seam: "Identity: CLEAR", mode: identityMode("clear"), live: identityMode("clear") === "live", needs: ["IDENTITY_CLEAR=live", `CLEAR_CLIENT_ID (${set("CLEAR_CLIENT_ID")})`, `CLEAR_CLIENT_SECRET (${set("CLEAR_CLIENT_SECRET")})`, `CLEAR_REDIRECT_URI (${set("CLEAR_REDIRECT_URI")})`, "endpoints default to verified.clearme.com/integrations"], notes: "CLEAR Verified OIDC, authorization code + PKCE, ID token verified against JWKS; sandbox is chosen per client in the CLEAR console. Redirect URI: /api/identity/callback/clear." },
     { seam: "Identity: ID.me", mode: identityMode("idme"), live: identityMode("idme") === "live", needs: ["IDENTITY_IDME=live", `IDME_CLIENT_ID (${set("IDME_CLIENT_ID")})`, `IDME_CLIENT_SECRET (${set("IDME_CLIENT_SECRET")})`, `IDME_REDIRECT_URI (${set("IDME_REDIRECT_URI")})`, `IDME_ISSUER (${set("IDME_ISSUER")})`, "IDME_SCOPES = openid <policy handle, e.g. nist_aal2_ial2>"], notes: "Same OIDC implementation. Sandbox issuer https://api.idmelabs.com/oidc; production https://api.id.me/oidc. Redirect URI: /api/identity/callback/idme." },
     { seam: "Medicare: Blue Button 2.0", mode: blueButtonMode(), live: blueButtonMode() === "live", needs: ["BLUEBUTTON_ADAPTER=live", `BB_CLIENT_ID (${set("BB_CLIENT_ID")})`, `BB_CLIENT_SECRET (${set("BB_CLIENT_SECRET")})`, `BB_REDIRECT_URI (${set("BB_REDIRECT_URI")})`, "BB_BASE_URL (sandbox default)"], notes: "OAuth 2.0 + PKCE against sandbox.bluebutton.cms.gov; at authorization the adapter pulls Patient, Coverage and every ExplanationOfBenefit type (CARIN FHIR R4, _count 50, paginated) and maps them into the record; a beneficiary who withholds demographics still yields coverage and claims. Tokens are discarded after the pull. Redirect URI: /api/medicare/callback." },

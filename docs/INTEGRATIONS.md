@@ -4,7 +4,7 @@ Every external system sits behind an interface with a mock. Selection is by envi
 
 | Seam | Switch | Values | Interface | Live file |
 | --- | --- | --- | --- | --- |
-| Store | `STORE_DRIVER` | `memory` (default), `postgres` | `src/lib/store/repository.ts` | `postgres.ts` (to write) |
+| Store | `DATABASE_URL` / `STORE_DRIVER` | `memory` (local only), `postgres` (every deployment) | `src/lib/store/repository.ts` | `postgres.ts` (live) |
 | CLEAR | `IDENTITY_CLEAR` | `mock`, `live` | `src/lib/integrations/identity/types.ts` | `identity/oidc.ts` |
 | ID.me | `IDENTITY_IDME` | `mock`, `live` | same | same |
 | Blue Button 2.0 | `BLUEBUTTON_ADAPTER` | `mock`, `live` | `bluebutton/types.ts` | `bluebutton/live.ts` |
@@ -78,11 +78,11 @@ Mock writes to an in-memory outbox shown on `/clinic/integrations`. Twilio adapt
 
 ## 6. Persistent store
 
-Vercel runs the app on many short-lived instances, so the memory driver cannot carry a record created on one request (a provisional account at registration) to the next (the CLEAR callback). Two persistent drivers exist; selection is automatic from what Vercel injects, `STORE_DRIVER` overrides.
+`store/postgres.ts` runs on Neon Postgres through the standard `pg` driver with a small per-instance pool (`src/lib/db/client.ts`). Tables, from `db/migrations/0001_init.sql`: `tenants`; `documents(tenant_id, kind, id, data jsonb, version, updated_at, updated_by)` for households, staff and caregiver accounts, with row-level security keyed on the `app.tenant_id` session setting (FORCE, so the owner role is bound too; a missing setting matches nothing); `meta`; and the `audit` schema with `audit.events`, append-only by rule and hash-chained per tenant (`src/lib/db/audit-hash.ts`). `updateHousehold` reads the row `FOR UPDATE` and writes it back with `version + 1`, so concurrent edits serialize instead of overwriting. Reference data (localities, sites, resources, education) still ships in the seed file.
 
-`store/blob.ts` (current production) keeps each mutable collection as one private JSON blob in Vercel Blob (`careshare/v1/{households,staff,accounts,audit}.json`), created and seeded on first read. Reads bypass the CDN cache; a two-second in-process cache absorbs the several repository calls one render makes and every write clears it. Writes are read-modify-write of the whole collection, acceptable for a one-clinic pilot demo and the first thing Postgres replaces. Env: `BLOB_READ_WRITE_TOKEN` (injected when the Blob store is connected to the project).
+What the driver deliberately does not do: create or alter tables (CI applies `db/migrations` with `npm run db:migrate` before a deploy; at startup the driver only checks that nothing is pending and fails with the list if it is), seed itself (`npm run db:seed` loads the synthetic seed into staging; preview branches inherit it; production is never seeded), or read outside a tenant (every call goes through `withTenant()`).
 
-`store/postgres.ts` runs on Neon serverless Postgres (`@neondatabase/serverless`, HTTP driver, no pool to manage on Vercel). Three tables: `cs_documents(kind, id, data jsonb)` for households, staff and caregiver accounts; `cs_audit` append-only; `cs_meta`. Reference data (localities, sites, resources, education) comes from the seed file. On first request with an empty database the driver creates the tables and loads the seed; `Reset demo data` wipes and reseeds. Selection is automatic: `DATABASE_URL` set → postgres, else memory; `STORE_DRIVER` overrides. Create the database from the Vercel project (Storage → Create Database → Neon); Vercel injects `DATABASE_URL`. Encrypted token storage for Blue Button refresh tokens is the next addition.
+Environments and variables: `DATABASE_URL` (pooled) is the app's only runtime setting; `DATABASE_URL_UNPOOLED` (direct) is used by the migration and seed scripts from CI secrets; `CARESHARE_ENV=production` makes seed, reset and `--down` refuse. `/api/health` reports driver, schema version and pending migrations; `/clinic/integrations` shows the same. Local development uses the memory driver; `npm run test:db` runs the Postgres suite against a local server or a Neon branch with a non-superuser role (superusers bypass row-level security). `store/blob.ts` (one private JSON blob per collection) is kept for the v1 demo project only: it is selected by an explicit `STORE_DRIVER=blob`, never automatically, and refused when `VERCEL_ENV` or `CARESHARE_ENV` is production, because Blob is not on Vercel's HIPAA covered-services list. Encrypted token storage for Blue Button refresh tokens is the next addition.
 
 ## 7. Share with a provider (FHIR R4 export, SMART Health Link style)
 

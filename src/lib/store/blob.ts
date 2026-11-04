@@ -13,6 +13,11 @@
  * households, one actor at a time) and is the first thing Postgres replaces at scale.
  *
  *   BLOB_READ_WRITE_TOKEN   injected by Vercel when a Blob store is connected to the project
+ *   STORE_DRIVER=blob       required: this driver is never chosen automatically
+ *
+ * Status: kept for the v1 demo deployment (branch release/v1.0-rfa-baseline, its own Vercel project and
+ * Blob store, synthetic data) and refused in production, because Vercel Blob is not on Vercel's HIPAA
+ * covered-services list. Production and staging use postgres.ts. See docs/RUNBOOK.md.
  */
 
 import { get, put } from "@vercel/blob";
@@ -128,6 +133,9 @@ export function createBlobRepository(): Repository {
         .slice()
         .reverse()
         .slice(0, limit);
+    },
+    async health() {
+      return { driver: "blob" as const, ok: true, pendingMigrations: [] };
     },
     async reset() {
       cache.clear();

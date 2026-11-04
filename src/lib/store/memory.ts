@@ -107,5 +107,8 @@ export function createMemoryRepository(): Repository {
     async reset() {
       g.__careshareStore = fresh();
     },
+    async health() {
+      return { driver: "memory" as const, ok: true, pendingMigrations: [] };
+    },
   };
 }
