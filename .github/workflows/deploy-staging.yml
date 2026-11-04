@@ -26,11 +26,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Skip until the staging database secret exists
+        id: gate
+        run: |
+          if [ -z "${{ secrets.DATABASE_URL_STAGING_UNPOOLED }}" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; echo "DATABASE_URL_STAGING_UNPOOLED not set; nothing to migrate yet"; fi
       - name: Migrate staging
+        if: steps.gate.outputs.skip != 'true'
         run: npm run db:migrate
         env:
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_STAGING_UNPOOLED }}
       - name: Seed staging if empty (never resets)
+        if: steps.gate.outputs.skip != 'true'
         run: npm run db:seed
         env:
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_STAGING_UNPOOLED }}

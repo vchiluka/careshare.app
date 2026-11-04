@@ -26,6 +26,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Refuse to release without the production database secret
+        run: |
+          if [ -z "${{ secrets.DATABASE_URL_PROD_UNPOOLED }}" ]; then echo "DATABASE_URL_PROD_UNPOOLED is not set; a release cannot migrate production"; exit 1; fi
       - name: Migrate production
         run: npm run db:migrate
         env:

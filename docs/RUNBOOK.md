@@ -12,7 +12,7 @@ variables or GitHub Actions secrets; none is ever pasted into chat, a ticket or 
 | Preview | automatic per pull request | the PR branch | Neon branch created from `careshare-staging` `main` by the Neon Vercel integration, deleted with the PR | synthetic (inherited from staging) | mock pages |
 | Staging | custom environment `staging` | `main` | Neon project `careshare-staging`, branch `main` | synthetic seed, reset on demand | CLEAR, ID.me and Blue Button sandboxes |
 | Production | Production | `production` | Neon project `careshare-prod`, branch `production`, HIPAA enabled, 30-day restore window | real records, never seeded | production vendors |
-| v1 demo | separate project `careshare-v1` | `release/v1.0-rfa-baseline`, frozen | Vercel Blob store (`STORE_DRIVER=blob`) | synthetic seed | sandbox vendors with the v1 host's redirect URIs |
+| v1 demo | project `careshare-v1`, https://careshare-v1.vercel.app | `release/v1.0-rfa-baseline`, frozen | Vercel Blob store (`STORE_DRIVER=blob`) | synthetic seed | sandbox vendors with the v1 host's redirect URIs |
 
 
 Only production ever holds a real record. The v1 demo project is the application as submitted with the
