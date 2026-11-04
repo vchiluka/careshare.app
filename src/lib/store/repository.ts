@@ -6,18 +6,19 @@ import type { AuditEntry, CaregiverAccount, ClinicSite, CommunityResource, Educa
  * STORE_DRIVER=memory (default for `npm run dev` and unit tests) loads the synthetic seed into process
  * memory and keeps edits there until the process restarts. STORE_DRIVER=postgres (or any DATABASE_URL)
  * uses the Neon Postgres store, whose schema comes from db/migrations and whose data comes from
- * `npm run db:seed` (staging, previews) or from real use (production). Every deployed environment
- * must use postgres; the selector in index.ts refuses memory when VERCEL is set.
+ * `npm run db:seed` (staging, previews) or from real use (production). STORE_DRIVER=blob (explicit only)
+ * keeps the v1 demo deployment running on Vercel Blob with synthetic data; it is refused in production.
+ * The selector in index.ts refuses memory on Vercel and blob in production.
  */
 export interface StoreHealth {
-  driver: "memory" | "postgres";
+  driver: "memory" | "postgres" | "blob";
   ok: boolean;
   schemaVersion?: string;
   pendingMigrations: string[];
 }
 
 export interface Repository {
-  readonly driver: "memory" | "postgres";
+  readonly driver: "memory" | "postgres" | "blob";
   /** The demo clock (DEMO_AS_OF) or today. */
   asOf(): Promise<string>;
   localities(): Promise<Locality[]>;

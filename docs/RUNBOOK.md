@@ -12,8 +12,12 @@ variables or GitHub Actions secrets; none is ever pasted into chat, a ticket or 
 | Preview | automatic per pull request | the PR branch | Neon branch created from `careshare-staging` `main` by the Neon Vercel integration, deleted with the PR | synthetic (inherited from staging) | mock pages |
 | Staging | custom environment `staging` | `main` | Neon project `careshare-staging`, branch `main` | synthetic seed, reset on demand | CLEAR, ID.me and Blue Button sandboxes |
 | Production | Production | `release` | Neon project `careshare-prod`, branch `production`, HIPAA enabled, 30-day restore window | real records, never seeded | production vendors |
+| v1 demo | separate project `careshare-v1` | `release/v1.0-rfa-baseline`, frozen | Vercel Blob store (`STORE_DRIVER=blob`) | synthetic seed | sandbox vendors with the v1 host's redirect URIs |
 
-Only production ever holds a real record. `CARESHARE_ENV=production` is set only there and makes
+
+Only production ever holds a real record. The v1 demo project is the application as submitted with the
+RFA, kept running at its own URL for reviewers; it is never pointed at real data and is redeployed only
+by hand from its frozen branch. `CARESHARE_ENV=production` is set only there and makes
 `npm run db:seed`, `Reset demo data` and `npm run db:migrate -- --down` refuse.
 
 ## Variables per environment
