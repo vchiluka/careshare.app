@@ -11,7 +11,7 @@ variables or GitHub Actions secrets; none is ever pasted into chat, a ticket or 
 | Local | `npm run dev` | any branch | memory store (or a local Postgres via `DATABASE_URL`) | synthetic seed | mock pages |
 | Preview | automatic per pull request | the PR branch | Neon branch created from `careshare-staging` `main` by the Neon Vercel integration, deleted with the PR | synthetic (inherited from staging) | mock pages |
 | Staging | custom environment `staging` | `main` | Neon project `careshare-staging`, branch `main` | synthetic seed, reset on demand | CLEAR, ID.me and Blue Button sandboxes |
-| Production | Production | `release` | Neon project `careshare-prod`, branch `production`, HIPAA enabled, 30-day restore window | real records, never seeded | production vendors |
+| Production | Production | `production` | Neon project `careshare-prod`, branch `production`, HIPAA enabled, 30-day restore window | real records, never seeded | production vendors |
 | v1 demo | separate project `careshare-v1` | `release/v1.0-rfa-baseline`, frozen | Vercel Blob store (`STORE_DRIVER=blob`) | synthetic seed | sandbox vendors with the v1 host's redirect URIs |
 
 
@@ -43,7 +43,7 @@ GitHub Actions secrets: `NEON_API_KEY`, `NEON_STAGING_PROJECT_ID` (CI test branc
    and the actions file). `deploy-staging.yml` migrates and, if empty, seeds the staging database;
    Vercel deploys the same commit to `staging`. Check `https://<staging host>/api/health` reports
    `ok: true` with the expected `schemaVersion`.
-3. Release: open a pull request from `main` to `release`, get the owner's approval, merge.
+3. Release: open a pull request from `main` to `production`, get the owner's approval, merge.
    `release.yml` migrates production. Vercel builds the production deployment and, because
    auto-assign of production domains is off, waits.
 4. Smoke test the generated deployment URL: `/api/health` is `ok: true`, `/care` and `/clinic` render,

@@ -49,4 +49,4 @@ Every seam is an environment variable; `/clinic/integrations` shows the current 
 
 ## Deploy
 
-Vercel, Node runtime, Postgres on Neon. Set `CARESHARE_SECRET` (required in production), `DATABASE_URL` (pooled Neon string) and, below production, `DEMO_AS_OF`. CI applies `db/migrations` before each deploy and seeds staging; production is never seeded. Four environments (local memory, preview branch per pull request, `staging` tracking `main`, production tracking `release` with manual promote) are described in `docs/RUNBOOK.md`. Only production ever holds a real record.
+Vercel, Node runtime, Postgres on Neon. Set `CARESHARE_SECRET` (required in production), `DATABASE_URL` (pooled Neon string) and, below production, `DEMO_AS_OF`. CI applies `db/migrations` before each deploy and seeds staging; production is never seeded. Four environments (local memory, preview branch per pull request, `staging` tracking `main`, production tracking `production` with manual promote) are described in `docs/RUNBOOK.md`. Only production ever holds a real record.

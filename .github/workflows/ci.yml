@@ -1,4 +1,4 @@
-# CI for every pull request and every push to main or release.
+# CI for every pull request and every push to main or production.
 #
 # Jobs:
 #   checks     unit tests (memory store), lint, typecheck, build, dependency audit, secret scan
@@ -12,7 +12,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main, release]
+    branches: [main, production]
 
 permissions:
   contents: read

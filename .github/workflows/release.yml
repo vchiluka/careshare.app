@@ -1,4 +1,4 @@
-# On every push to release (the production branch): apply pending migrations to production.
+# On every push to the production branch: apply pending migrations to production.
 # Vercel builds the same commit for production; with "Auto-assign Custom Production Domains" off, that
 # build waits for a manual Promote after the smoke test. Production is never seeded and a migration is
 # never reverted here (scripts/migrate.ts refuses --down when CARESHARE_ENV=production).
@@ -6,7 +6,7 @@ name: release
 
 on:
   push:
-    branches: [release]
+    branches: [production]
 
 permissions:
   contents: read
