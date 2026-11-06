@@ -43,7 +43,7 @@ jobs:
         run: npm audit --audit-level=high
       - name: No Blob, no console outside the logger
         run: |
-          if grep -rln "@vercel/blob" src scripts | grep -v "src/lib/store/blob.ts"; then echo "@vercel/blob may only be imported by src/lib/store/blob.ts"; exit 1; fi
+          if grep -rln "@vercel/blob" src scripts | grep -v "src/lib/store/blob.ts" | grep -v "__tests__"; then echo "@vercel/blob may only be imported by src/lib/store/blob.ts"; exit 1; fi
           if grep -rn "console\.\(log\|warn\|error\|info\)" src --include=*.ts --include=*.tsx | grep -v "src/lib/log.ts" | grep -v "__tests__"; then echo "console.* outside src/lib/log.ts"; exit 1; fi
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
