@@ -9,40 +9,56 @@ variables or GitHub Actions secrets; none is ever pasted into chat, a ticket or 
 | Environment | Vercel | Git | Database | Data | Vendors |
 | --- | --- | --- | --- | --- | --- |
 | Local | `npm run dev` | any branch | memory store (or a local Postgres via `DATABASE_URL`) | synthetic seed | mock pages |
-| Preview | automatic per pull request | the PR branch | Neon branch created from `careshare-staging` `main` by the Neon Vercel integration, deleted with the PR | synthetic (inherited from staging) | mock pages |
-| Staging | custom environment `staging` | `main` | Neon project `careshare-staging`, branch `main` | synthetic seed, reset on demand | CLEAR, ID.me and Blue Button sandboxes |
+| Preview | automatic for every branch that is not `production`; `main` is the stable one at `careshare-git-main-vchilukas-projects.vercel.app` | `main` and every PR branch | Neon project `careshare-staging`, branch `production` (shared by all previews) | synthetic seed, reset on demand | mock pages; sandboxes on `main` |
 | Production | Production | `production` | Neon project `careshare-prod`, branch `production`, HIPAA enabled, 30-day restore window | real records, never seeded | production vendors |
 | v1 demo | project `careshare-v1`, https://careshare-v1.vercel.app | `release/v1.0-rfa-baseline`, frozen | Vercel Blob store (`STORE_DRIVER=blob`) | synthetic seed | sandbox vendors with the v1 host's redirect URIs |
 
 
-Only production ever holds a real record. The v1 demo project is the application as submitted with the
+Only production ever holds a real record. "Staging" is the `main` preview: Vercel has no separate
+environment for it and none is needed while all previews share one synthetic database. The Neon Vercel
+integration is deliberately not installed: it always writes the connected project's connection string
+into Vercel Production, which would point production at the staging project, and it has no setting to
+limit it to previews. All four connection strings are entered by hand (table below). A pull request that
+adds a migration will show `pendingMigrations` on its preview until it is merged and `deploy-staging.yml`
+applies it; that is expected. The v1 demo project is the application as submitted with the
 RFA, kept running at its own URL for reviewers; it is never pointed at real data and is redeployed only
 by hand from its frozen branch. `CARESHARE_ENV=production` is set only there and makes
 `npm run db:seed`, `Reset demo data` and `npm run db:migrate -- --down` refuse.
 
 ## Variables per environment
 
-| Variable | Local | Preview | Staging | Production |
-| --- | --- | --- | --- | --- |
-| `DATABASE_URL` (pooled) | optional | injected by the Neon integration | staging project | production project |
-| `CARESHARE_SECRET` | any 16+ chars | preview value | staging value | its own value, rotated yearly |
-| `CARESHARE_ENV` | unset | unset | unset | `production` |
-| `DEMO_AS_OF` | optional | optional | optional | never |
-| vendor switches (`IDENTITY_*`, `BLUEBUTTON_ADAPTER`) | mock | mock | live, sandbox credentials | live, production credentials |
+| Variable | Local | Preview (Vercel, Sensitive) | Production (Vercel, Sensitive) |
+| --- | --- | --- | --- |
+| `DATABASE_URL` (pooled, host contains `-pooler`) | optional | `careshare-staging` | `careshare-prod` |
+| `DATABASE_URL_UNPOOLED` (direct) | optional | `careshare-staging` | `careshare-prod` |
+| `CARESHARE_SECRET` | any 16+ chars | preview value | its own value, rotated yearly |
+| `CARESHARE_ENV` | unset | unset | `production` |
+| `DEMO_AS_OF` | optional | optional | never |
+| vendor switches (`IDENTITY_*`, `BLUEBUTTON_ADAPTER`) | mock | sandbox credentials | production credentials |
+| `ALLOW_MEMORY_STORE` | unset | `0` (was `1` before Neon existed; delete the row) | never |
 
-GitHub Actions secrets: `NEON_API_KEY`, `NEON_STAGING_PROJECT_ID` (CI test branches),
-`DATABASE_URL_STAGING_UNPOOLED` (environment `staging`), `DATABASE_URL_PROD_UNPOOLED` (environment
-`production`).
+GitHub Actions repository secrets (Settings → Secrets and variables → Actions → Repository secrets):
+
+| Secret | Value | Used by | Required |
+| --- | --- | --- | --- |
+| `DATABASE_URL_STAGING_UNPOOLED` | `careshare-staging` direct string (same value as Vercel Preview `DATABASE_URL_UNPOOLED`) | `deploy-staging.yml` migrate + seed on every push to `main` | yes |
+| `DATABASE_URL_PROD_UNPOOLED` | `careshare-prod` direct string | `release.yml` migrate on push to `production` | before the first release |
+| `NEON_API_KEY`, `NEON_STAGING_PROJECT_ID` | API key `careshare-ci`; project id of `careshare-staging` | `ci.yml` `neon-tests`: a throwaway Neon branch per run | optional; the job skips without them |
+
+The same connection string is stored twice on purpose: Vercel feeds the running app, GitHub Actions
+runs the migrations. The app never runs DDL, so without the GitHub secret the preview serves 503 with
+`pendingMigrations` until someone applies the schema.
 
 ## How code moves
 
 1. Branch from `main`, open a pull request. CI runs tests (memory and Postgres), lint, typecheck,
-   build, dependency audit, secret scan, and the migration dry run. A preview deployment appears with
-   its own Neon branch.
+   build, dependency audit, secret scan, and the migration dry run. A preview deployment appears on the
+   shared staging database.
 2. Merge to `main` after review (CODEOWNERS requires the owner on `db/`, the store, the access engine
    and the actions file). `deploy-staging.yml` migrates and, if empty, seeds the staging database;
-   Vercel deploys the same commit to `staging`. Check `https://<staging host>/api/health` reports
-   `ok: true` with the expected `schemaVersion`.
+   Vercel deploys the same commit as the `main` preview. Check
+   `https://careshare-git-main-vchilukas-projects.vercel.app/api/health` reports `ok: true` with the
+   expected `schemaVersion`.
 3. Release: open a pull request from `main` to `production`, get the owner's approval, merge.
    `release.yml` migrates production. Vercel builds the production deployment and, because
    auto-assign of production domains is off, waits.
