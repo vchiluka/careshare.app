@@ -43,7 +43,7 @@ jobs:
         run: npm audit --audit-level=high
       - name: No Blob, no console outside the logger
         run: |
-          if grep -rln "@vercel/blob" src scripts | grep -v "src/lib/store/blob.ts"; then echo "@vercel/blob may only be imported by src/lib/store/blob.ts"; exit 1; fi
+          if grep -rln "@vercel/blob" src scripts | grep -v "src/lib/store/blob.ts" | grep -v "__tests__"; then echo "@vercel/blob may only be imported by src/lib/store/blob.ts"; exit 1; fi
           if grep -rn "console\.\(log\|warn\|error\|info\)" src --include=*.ts --include=*.tsx | grep -v "src/lib/log.ts" | grep -v "__tests__"; then echo "console.* outside src/lib/log.ts"; exit 1; fi
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v3
@@ -72,10 +72,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Create a non-superuser role (superusers bypass row-level security)
+        run: |
+          psql "postgres://careshare_app:careshare_app@localhost:5432/careshare_test" -v ON_ERROR_STOP=1 -c "create role app_test login password 'app_test' createdb;" -c "alter database careshare_test owner to app_test;"
       - name: Postgres store tests (row-level security, concurrency, audit chain, migrations)
         run: npx vitest run src/lib/store/__tests__/postgres.test.ts
         env:
-          TEST_DATABASE_URL: postgres://careshare_app:careshare_app@localhost:5432/careshare_test
+          TEST_DATABASE_URL: postgres://app_test:app_test@localhost:5432/careshare_test
       - name: Migration dry run from empty (status, up, down, up)
         run: |
           npm run db:migrate -- --status
@@ -84,7 +87,7 @@ jobs:
           npm run db:migrate
           npm run db:seed
         env:
-          DATABASE_URL: postgres://careshare_app:careshare_app@localhost:5432/careshare_test
+          DATABASE_URL: postgres://app_test:app_test@localhost:5432/careshare_test
 
   neon-tests:
     # Runs the same suite on a real Neon branch so pooling, TLS and the Neon role behave as in staging.
